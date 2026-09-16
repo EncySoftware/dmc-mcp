@@ -117,6 +117,74 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         return sb.ToString();
     }
 
+    // ------------------------------------------------------------------- update_post
+
+    [McpServerTool(Name = "update_post"), Description(
+        "Поправить поля черновика, которые ИИ угадал неверно: имя, описание, стойка, станок, тип станка, " +
+        "число осей. Файлы, цену и статус не трогает. Передавайте только то, что меняете.")]
+    public async Task<string> UpdatePost(
+        [Description("id поста")] string id,
+        [Description("Имя компонента")] string? name = null,
+        [Description("Описание")] string? description = null,
+        [Description("Производитель стойки, например Fanuc")] string? controllerManufacturer = null,
+        [Description("Серия стойки, например 0i")] string? controllerSeries = null,
+        [Description("Модель стойки, например MF")] string? controllerModel = null,
+        [Description("Производитель станка, например Haas")] string? machineManufacturer = null,
+        [Description("Серия станка, например VF")] string? machineSeries = null,
+        [Description("Модель станка, например VF-2")] string? machineModel = null,
+        [Description("Тип станка: MILLING, TURNING, MILL_TURN, WIRE_EDM, LASER, PLASMA, WATERJET, GRINDING, " +
+                     "ROBOT, EDM, ROUTER, SWISS, GAS_PLASMA_LASER, ADDITIVE, OTHER")] string? machineType = null,
+        [Description("Число осей, от 1 до 12")] int? numberOfAxes = null)
+    {
+        // Проверки до похода в DMC: опечатку в типе станка автор узнаёт сразу, а не после PUT.
+        if (machineType != null)
+        {
+            machineType = machineType.Trim().ToUpperInvariant();
+            if (!MachineTypes.Contains(machineType))
+                return $"ОШИБКА: тип станка «{machineType}» неизвестен. Есть: " + string.Join(", ", MachineTypes);
+        }
+        if (numberOfAxes is < 1 or > 12) return "ОШИБКА: число осей — от 1 до 12.";
+
+        var (token, err) = await Token();
+        if (token == null) return err!;
+
+        ProductInfo? p;
+        try { p = await dmc.GetProduct(id, token); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
+        if (p == null) return Explain(new DmcHttpException(404, ""));
+
+        // PUT у DMC полный: тело — вся текущая карточка, поверх неё только переданное.
+        var body = DmcJson.RequestFrom(p.Raw);
+        var changes = new List<string>();
+        void Set(string field, string? old, string? value)
+        {
+            if (value == null || value == old) return;
+            body[field] = value;
+            changes.Add($"{field}: {old ?? "—"} → {value}");
+        }
+        Set("name", p.Name, name);
+        Set("description", p.Description, description);
+        Set("controllerManufacturer", p.ControllerManufacturer, controllerManufacturer);
+        Set("controllerSeries", p.ControllerSeries, controllerSeries);
+        Set("controllerModel", p.ControllerModel, controllerModel);
+        Set("machineManufacturer", p.MachineManufacturer, machineManufacturer);
+        Set("machineSeries", p.MachineSeries, machineSeries);
+        Set("machineModel", p.MachineModel, machineModel);
+        Set("machineType", p.MachineType, machineType);
+        if (numberOfAxes is int n && n != p.NumberOfAxes)
+        {
+            body["numberOfAxes"] = n;
+            changes.Add($"numberOfAxes: {p.NumberOfAxes?.ToString() ?? "—"} → {n}");
+        }
+        if (changes.Count == 0) return "Менять нечего — все переданные значения уже такие.";
+
+        try { await dmc.UpdateProduct(id, body, token); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
+        return "Изменено:\n" + string.Join("\n", changes) + "\nСсылка: " + p.Url(dmc.Site);
+    }
+
     // ------------------------------------------------------------------- общее
 
     internal string Describe(ProductInfo p)
