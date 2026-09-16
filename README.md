@@ -10,9 +10,29 @@ from Cursor or Claude Code — the DMC counterpart of
 | `update_post` | Fixes what the AI guessed wrong: name, description, control, machine, machine type, axes. |
 | `submit_post` | Sends the draft for moderation. If something is missing, it says what. |
 | `check_post_status` | Draft / under review / published, with the link. |
+| `find_posts` | Before uploading: posts already in the catalogue and your own (drafts included) by text, control maker or machine maker — so the agent asks "update this one?" instead of creating a duplicate. |
+| `replace_post_file` | A new version of an existing post: uploads the archive and updates the card; the old archive is removed and licensed copies refreshed. A published post's new archive goes live at once, without re-moderation. |
+| `publish_folder` | Every post in a folder in one import, each its own draft. An optional CSV manifest supplies exact names and fields instead of the AI's guesses. |
 
 Publishing does **not** submit for moderation by itself: the author looks at what the AI filled
 in first.
+
+### Manifest for `publish_folder`
+
+A CSV next to the files; only the `file` column is required, the rest are optional and only
+override what they name:
+
+```csv
+file,name,controllerManufacturer,controllerSeries,controllerModel,machineManufacturer,machineModel,machineType,numberOfAxes
+fanuc-0i.sppx,"Fanuc 0i-MF for Haas VF-2",Fanuc,0i,MF,Haas,VF-2,MILLING,3
+siemens.sppx,Siemens 828D for DMG,Siemens,828D,,DMG MORI,,MILLING,3
+```
+
+Columns: `file`, `name`, `description`, `controllerManufacturer`, `controllerSeries`,
+`controllerModel`, `machineManufacturer`, `machineSeries`, `machineModel`, `machineType`
+(MILLING, TURNING, MILL_TURN, WIRE_EDM, LASER, PLASMA, WATERJET, GRINDING, ROBOT, EDM, ROUTER,
+SWISS, GAS_PLASMA_LASER, ADDITIVE, OTHER), `numberOfAxes`. An unknown column is an error, not a
+silently dropped one.
 
 ## Install (Cursor, Claude Code)
 
