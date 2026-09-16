@@ -68,11 +68,13 @@ public static class SetupCommand
         var version = await proc.Run("claude", "--version");
         if (version.Ok)
         {
-            var add = await proc.Run("claude", $"mcp add {ServerName} -- {Command}");
+            // --scope user: без него Claude Code запоминает сервер только для папки, где шёл setup, и
+            // из любой другой папки инструмента нет (проверено 2026-09-16 — `claude mcp list` пуст).
+            var add = await proc.Run("claude", $"mcp add --scope user {ServerName} -- {Command}");
             write(add.Ok
                 ? $"Claude Code: {ServerName} registered"
                 : $"Claude Code: could not register ({add.StdErr.Trim()}) — add it manually with "
-                  + $"`claude mcp add {ServerName} -- {Command}`");
+                  + $"`claude mcp add --scope user {ServerName} -- {Command}`");
         }
 
         // ---- store login: setup is the one moment the author is at a terminal
