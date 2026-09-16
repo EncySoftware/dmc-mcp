@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using ModelContextProtocol.Server;
@@ -148,6 +149,224 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
 
         return $"{p.Name} отправлен на модерацию — в каталоге появится после одобрения.\nСсылка: {p.Url(dmc.Site)}";
+    }
+
+    // -------------------------------------------------------------------- find_posts
+
+    [McpServerTool(Name = "find_posts"), Description(
+        "Найти посты до заливки, чтобы не плодить дубли: опубликованные в каталоге и ваши собственные " +
+        "(черновики тоже). Хотя бы один критерий: текст (имя, модель станка, слово из описания), " +
+        "производитель стойки, производитель станка.")]
+    public async Task<string> FindPosts(
+        [Description("Текст: имя поста, модель станка, слово из описания")] string? query = null,
+        [Description("Производитель стойки, например Fanuc")] string? controllerManufacturer = null,
+        [Description("Производитель станка, например Haas")] string? machineManufacturer = null)
+    {
+        if (string.IsNullOrWhiteSpace(query) && string.IsNullOrWhiteSpace(controllerManufacturer)
+            && string.IsNullOrWhiteSpace(machineManufacturer))
+            return "ОШИБКА: укажите хотя бы что-то — текст, стойку или производителя станка.";
+
+        var (token, _) = await Token(); // каталог виден и без входа; свои черновики — только с ним
+        IReadOnlyList<ProductInfo> published;
+        try { published = await dmc.SearchPublished(query, controllerManufacturer, machineManufacturer, token); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
+
+        var mine = new List<ProductInfo>();
+        if (token != null)
+        {
+            try
+            {
+                mine = (await dmc.MyProducts(token))
+                    .Where(p => p.ContentType == "POST_PROCESSOR" && Matches(p, query, controllerManufacturer, machineManufacturer))
+                    .ToList();
+            }
+            catch (Exception) { /* свои не прочитались — покажем хотя бы каталог */ }
+        }
+
+        var mineIds = mine.Select(p => p.Id).ToHashSet();
+        var sb = new StringBuilder();
+        foreach (var p in mine) sb.AppendLine(Line(p, own: true));
+        foreach (var p in published) if (!mineIds.Contains(p.Id)) sb.AppendLine(Line(p, own: false));
+        if (sb.Length == 0) sb.AppendLine("DMC ничего не нашёл — можно публиковать.");
+        if (token == null) sb.AppendLine($"Ваши черновики не проверены — входа нет (`{Brand.Cli} login`).");
+        return sb.ToString();
+    }
+
+    private string Line(ProductInfo p, bool own) =>
+        $"{(own ? "[ваш] " : "")}{p.Name} — {StatusWord(p.PublicationStatus)} — стойка {p.Controller} — "
+        + $"станок {p.Machine} — {p.Url(dmc.Site)} — id {p.Id}";
+
+    /** Свои приходят все — фильтр на месте, по тем же полям, по которым каталог ищет query. */
+    private static bool Matches(ProductInfo p, string? query, string? controller, string? maker)
+    {
+        static bool Has(string? hay, string? needle) =>
+            string.IsNullOrWhiteSpace(needle) || (hay ?? "").Contains(needle.Trim(), StringComparison.OrdinalIgnoreCase);
+        bool q = string.IsNullOrWhiteSpace(query)
+                 || Has(p.Name, query) || Has(p.Description, query) || Has(p.Controller, query) || Has(p.Machine, query);
+        return q && Has(p.ControllerManufacturer, controller) && Has(p.MachineManufacturer, maker);
+    }
+
+    // ------------------------------------------------------------ replace_post_file
+
+    [McpServerTool(Name = "replace_post_file"), Description(
+        "Заменить архив существующего поста новой версией: файл уходит в хранилище, карточка обновляется, " +
+        "старый архив удаляется. У опубликованного поста новый архив попадает в каталог сразу, без " +
+        "повторной модерации.")]
+    public async Task<string> ReplacePostFile(
+        [Description("id поста")] string id,
+        [Description("Путь к новому файлу: .sppx, .dll, .stnci или .zip")] string file)
+    {
+        var path = Path.GetFullPath(file);
+        if (!File.Exists(path)) return $"ОШИБКА: файла {path} нет.";
+        if (!PostExtensions.Contains(Path.GetExtension(path).ToLowerInvariant()))
+            return $"ОШИБКА: {Path.GetFileName(path)} — не пост. Нужен .sppx, .dll, .stnci или .zip.";
+
+        var (token, err) = await Token();
+        if (token == null) return err!;
+
+        // Карточку читаем ДО загрузки: чужой или несуществующий id не должен стоить файла в tmp/.
+        ProductInfo? p;
+        try { p = await dmc.GetProduct(id, token); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
+        if (p == null) return Explain(new DmcHttpException(404, ""));
+
+        string staged;
+        try { staged = await dmc.UploadFile(path, token); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: не удалось загрузить файл в DMC: " + e.Message; }
+
+        // Полный PUT с путём tmp/…: бэкенд переносит файл к продукту, удаляет старый, перечитывает
+        // габариты и обновляет лицензионный контейнер у тех, кто пост уже держит.
+        var body = DmcJson.RequestFrom(p.Raw);
+        body["productFile"] = staged;
+        try { await dmc.UpdateProduct(p.Id, body, token); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"Архив поста «{p.Name}» заменён на {Path.GetFileName(path)}; старый удалён, копии у держателей лицензий обновлены.");
+        if (p.PublicationStatus == "PUBLISHED")
+            sb.AppendLine("Пост опубликован — новый архив уходит в каталог сразу, без повторной модерации.");
+        sb.AppendLine("Ссылка: " + p.Url(dmc.Site));
+        return sb.ToString();
+    }
+
+    // ---------------------------------------------------------------- publish_folder
+
+    /** Лимит одной загрузки в bulk-zip на бэкенде (spring.servlet.multipart, 1 ГБ). */
+    internal const long MaxUploadBytes = 1024L * 1024 * 1024;
+
+    [McpServerTool(Name = "publish_folder"), Description(
+        "Загрузить все посты из папки одним импортом — каждый становится отдельным черновиком. " +
+        "Manifest (CSV: file,name,controllerManufacturer,…) даёт точные имя и поля вместо догадок ИИ. " +
+        "На модерацию не отправляет.")]
+    public async Task<string> PublishFolder(
+        [Description("Папка с файлами постов (.sppx, .dll, .stnci, .zip); подпапки не смотрим")] string dir,
+        [Description("Путь к CSV-манифесту: колонки file, name, description, controllerManufacturer, " +
+                     "controllerSeries, controllerModel, machineManufacturer, machineSeries, machineModel, " +
+                     "machineType, numberOfAxes; обязательна только file")] string? manifest = null,
+        [Description("true (по умолчанию) — ИИ дописывает описание, обложку и метаданные; false — только разбор архива")] bool ai = true)
+    {
+        var dirPath = Path.GetFullPath(dir);
+        if (!Directory.Exists(dirPath)) return $"ОШИБКА: папки {dirPath} нет.";
+        var files = Directory.GetFiles(dirPath)
+            .Where(f => PostExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (files.Count == 0) return $"ОШИБКА: в {dirPath} нет файлов постов (.sppx, .dll, .stnci, .zip).";
+
+        Manifest? man = null;
+        var notes = new List<string>();
+        if (manifest != null)
+        {
+            var mp = Path.GetFullPath(manifest);
+            if (!File.Exists(mp)) return $"ОШИБКА: manifest {mp} не найден.";
+            try { man = Manifest.Parse(mp); }
+            catch (InvalidDataException e) { return "ОШИБКА: manifest — " + e.Message; }
+            var present = files.Select(f => Path.GetFileName(f)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var f in man.Files)
+                if (!present.Contains(f)) notes.Add($"В manifest есть {f}, а его нет в папке — строка пропущена.");
+        }
+
+        var (token, err) = await Token();
+        if (token == null) return err!;
+
+        // Папка на компонент: так bulk-zip делит архив на отдельные черновики и берёт имя из папки.
+        var folderOf = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // папка → файл
+        var zipPath = Path.Combine(Path.GetTempPath(), "dmc-folder-" + Guid.NewGuid().ToString("N")[..8] + ".zip");
+        try
+        {
+            using (var zip = System.IO.Compression.ZipFile.Open(zipPath, System.IO.Compression.ZipArchiveMode.Create))
+            {
+                foreach (var f in files)
+                {
+                    var fileName = Path.GetFileName(f);
+                    var wanted = man?.For(fileName)?.Name;
+                    var folder = SafeFolderName(string.IsNullOrWhiteSpace(wanted) ? Path.GetFileNameWithoutExtension(f) : wanted!);
+                    var unique = folder;
+                    for (int n = 2; folderOf.ContainsKey(unique); n++) unique = $"{folder} ({n})";
+                    folderOf[unique] = fileName;
+                    zip.CreateEntryFromFile(f, unique + "/" + fileName);
+                }
+            }
+            if (new FileInfo(zipPath).Length > MaxUploadBytes)
+                return "ОШИБКА: архив получился больше 1 ГБ — разбейте папку на части.";
+
+            var (progress, importErr) = await Import(zipPath, ai, null, null, token);
+            if (progress == null) return importErr!;
+
+            var sb = new StringBuilder();
+            foreach (var note in notes) sb.AppendLine(note);
+            await ReportComponents(sb, progress, token);
+            if (man != null) await ApplyManifest(sb, progress, man, folderOf, token);
+            sb.AppendLine($"Итого {progress.Components.Count} черновик(ов). Проверьте и вызовите submit_post для каждого.");
+            return sb.ToString();
+        }
+        finally
+        {
+            try { File.Delete(zipPath); } catch { /* временный файл */ }
+        }
+    }
+
+    /** Имя папки в zip из имени компонента: символы, запрещённые в путях, — в дефис. */
+    internal static string SafeFolderName(string name)
+    {
+        var bad = Path.GetInvalidFileNameChars();
+        var s = new string(name.Select(ch => bad.Contains(ch) || ch == '/' || ch == '\\' ? '-' : ch).ToArray())
+            .Trim().TrimEnd('.');
+        return s.Length == 0 ? "post" : s;
+    }
+
+    /** Имя, каким bulk-zip вернёт папку: он лишь заменяет «_» между цифрами на «/». */
+    private static string MatchKey(string s) =>
+        System.Text.RegularExpressions.Regex.Replace(s, "(?<=\\d)_(?=\\d)", "/").Trim();
+
+    /** Поля из manifest — PUT-ом на каждый созданный черновик; каждая неудача — строкой в отчёте. */
+    private async Task ApplyManifest(StringBuilder sb, ImportProgress progress, Manifest man,
+        Dictionary<string, string> folderOf, string token)
+    {
+        foreach (var c in progress.Components)
+        {
+            var pair = folderOf.FirstOrDefault(kv =>
+                string.Equals(MatchKey(kv.Key), c.Name.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (pair.Key == null) continue;
+            var entry = man.For(pair.Value);
+            if (entry == null) continue;
+            var fields = entry.Fields with { Name = entry.Name };
+            if (fields.IsEmpty) continue;
+
+            var (normalized, fieldErr) = Normalize(fields);
+            if (normalized == null) { sb.AppendLine($"{c.Name}: manifest не применён — {fieldErr}"); continue; }
+            ProductInfo? p = null;
+            try { p = await dmc.GetProduct(c.ProductId, token); }
+            catch (Exception) { /* ниже — строкой в отчёте */ }
+            if (p == null) { sb.AppendLine($"{c.Name}: manifest не применён — карточка не прочиталась."); continue; }
+            var (changes, putErr) = await PutFields(p, normalized, token);
+            if (putErr != null) { sb.AppendLine($"{c.Name}: manifest не применён — {putErr}"); continue; }
+            if (changes.Count > 0) sb.AppendLine($"{c.Name}: из manifest — " + string.Join("; ", changes));
+        }
     }
 
     // ------------------------------------------------------------ импорт: общее
