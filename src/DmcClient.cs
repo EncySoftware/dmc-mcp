@@ -48,6 +48,13 @@ public interface IDmcClient
     /** Полный PUT: body — все поля ProductCreateRequest, частичного у DMC нет. */
     Task<ProductInfo> UpdateProduct(string id, IDictionary<string, object?> body, string accessToken);
     Task<ProductInfo> SetStatus(string id, string status, string accessToken);
+    /** Опубликованные посты по запросу и фильтрам — для поиска дублей. Работает и без входа. */
+    Task<IReadOnlyList<ProductInfo>> SearchPublished(string? query, string? controllerManufacturer,
+        string? machineManufacturer, string? accessToken);
+    /** Все свои компоненты любого статуса (GET /products/my). */
+    Task<IReadOnlyList<ProductInfo>> MyProducts(string accessToken);
+    /** Кладёт файл во временное хранилище; возвращает путь tmp/<uploadId>/<file>, который принимает PUT. */
+    Task<string> UploadFile(string filePath, string accessToken);
 }
 
 public static class DmcJson
@@ -87,6 +94,17 @@ public static class DmcJson
         "supportedCodes", "sampleOutputCode", "supportedCodesFile", "sampleOutputCodeFile", "productFile",
         "imageUrl", "images", "visibility", "publicationStatus", "experienceStatus", "encyTestStatus",
     };
+
+    /** Список карточек: голый массив или страница Spring ({"content":[…]}). */
+    public static List<ProductInfo> Products(JsonElement r)
+    {
+        var arr = r;
+        if (r.ValueKind == JsonValueKind.Object && r.TryGetProperty("content", out var c)) arr = c;
+        var list = new List<ProductInfo>();
+        if (arr.ValueKind != JsonValueKind.Array) return list;
+        foreach (var e in arr.EnumerateArray()) list.Add(Product(e));
+        return list;
+    }
 
     public static Dictionary<string, object?> RequestFrom(JsonElement product)
     {
@@ -163,6 +181,46 @@ public class DmcClient : IDmcClient
             $"{_api}/products/{Uri.EscapeDataString(id)}/status?status={Uri.EscapeDataString(status)}");
         Auth(req, accessToken);
         return DmcJson.Product(JsonDocument.Parse(await Read(await Http.SendAsync(req))).RootElement);
+    }
+
+    public async Task<IReadOnlyList<ProductInfo>> SearchPublished(string? query, string? controllerManufacturer,
+        string? machineManufacturer, string? accessToken)
+    {
+        // Форма ProductSearchRequest: списки для фильтров, page/size для страницы. Только посты.
+        var body = new Dictionary<string, object?>
+        {
+            ["contentTypes"] = new[] { "POST_PROCESSOR" },
+            ["page"] = 0,
+            ["size"] = 20,
+        };
+        if (!string.IsNullOrWhiteSpace(query)) body["query"] = query.Trim();
+        if (!string.IsNullOrWhiteSpace(controllerManufacturer)) body["controllerManufacturers"] = new[] { controllerManufacturer.Trim() };
+        if (!string.IsNullOrWhiteSpace(machineManufacturer)) body["machineManufacturers"] = new[] { machineManufacturer.Trim() };
+        using var req = new HttpRequestMessage(HttpMethod.Post, $"{_api}/products/search")
+        { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
+        Auth(req, accessToken);
+        return DmcJson.Products(JsonDocument.Parse(await Read(await Http.SendAsync(req))).RootElement);
+    }
+
+    public async Task<IReadOnlyList<ProductInfo>> MyProducts(string accessToken)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"{_api}/products/my");
+        Auth(req, accessToken);
+        return DmcJson.Products(JsonDocument.Parse(await Read(await Http.SendAsync(req))).RootElement);
+    }
+
+    public async Task<string> UploadFile(string filePath, string accessToken)
+    {
+        using var form = new MultipartFormDataContent();
+        var bytes = new ByteArrayContent(await File.ReadAllBytesAsync(filePath));
+        bytes.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        form.Add(bytes, "file", Path.GetFileName(filePath));
+        using var req = new HttpRequestMessage(HttpMethod.Post, $"{_api}/storage/upload") { Content = form };
+        Auth(req, accessToken);
+        var r = JsonDocument.Parse(await Read(await Http.SendAsync(req))).RootElement;
+        return r.TryGetProperty("path", out var p) && p.ValueKind == JsonValueKind.String
+            ? p.GetString()!
+            : throw new InvalidOperationException("хранилище не вернуло путь файла");
     }
 
     private static void Auth(HttpRequestMessage req, string? token)
