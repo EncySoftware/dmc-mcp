@@ -78,9 +78,9 @@ public static class BrowserLogin
 
     /// <summary>What the browser tab says once it has served its purpose.</summary>
     private const string DonePage =
-        "<!doctype html><meta charset=utf-8><title>СПРУТКАМ store</title>"
+        "<!doctype html><meta charset=utf-8><title>Digital Machine Center</title>"
         + "<body style=\"font:16px system-ui;padding:3rem;text-align:center\">"
-        + "<p>Signed in to the СПРУТКАМ Extension Store.</p>"
+        + "<p>Signed in to Digital Machine Center.</p>"
         + "<p style=\"color:#666\">You can close this tab and go back to the terminal.</p>";
 
     /**
@@ -116,7 +116,7 @@ public static class BrowserLogin
         string url = AuthorizeUrl(AuthorizeEndpointFor(tokenEndpoint), clientId, redirectUri,
                                   state, ChallengeFor(verifier));
         // Plain ASCII on purpose: a Windows console in codepage 866 turns a nice ellipsis into mojibake.
-        write("Opening the СПРУТКАМ sign-in page in your browser...");
+        write("Opening the Digital Machine Center sign-in page in your browser...");
         write("If it does not open, paste this address yourself:");
         write("  " + url);
         await openBrowser(url);

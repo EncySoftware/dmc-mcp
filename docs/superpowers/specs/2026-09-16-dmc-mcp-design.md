@@ -11,7 +11,7 @@
 ## Что это
 
 Копия `sprutcam-extension-mcp` с заменой значений: .NET 8, `ModelContextProtocol` 1.4.1, stdio,
-ставится как `dotnet tool`. Команда `dmc-mcp`, пакет `SprutTechnology.DmcMcp`, имя сервера
+ставится как `dotnet tool`. Команда `dmc-mcp`, пакет `EncySoftware.DmcMcp`, имя сервера
 в настройках редактора — `dmc`.
 
 Из образца переносится: `Program.cs` (подкоманды `login`/`setup`, запуск сервера, логи в stderr),

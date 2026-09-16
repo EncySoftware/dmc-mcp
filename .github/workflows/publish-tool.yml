@@ -1,0 +1,84 @@
+# Push a version tag (v0.1.1) -> pack the dotnet tool with that version -> publish to nuget.org,
+# so installing it is a single `dotnet tool install -g EncySoftware.DmcMcp`.
+#
+# Auth: nuget.org trusted publishing - the run exchanges its GitHub OIDC token for a short-lived
+# API key, so no key is stored anywhere. Set it up once on nuget.org (Trusted Publishing policy):
+# owner = the nuget.org account, repository = this repo, workflow file = publish-tool.yml, no
+# environment. The nuget.org username comes from the NUGET_USER variable (default: galilenar).
+#
+# A long-lived NUGET_API_KEY secret still works as a fallback; without either the job just attaches
+# the .nupkg to the GitHub Release, which authors can install from.
+
+name: publish-tool
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Pack only, publish nothing
+        type: boolean
+        default: true
+
+permissions:
+  contents: write        # attach the package to the release
+  id-token: write        # prove this run's identity to nuget.org (trusted publishing)
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Version from tag
+        id: ver
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            v="${GITHUB_REF_NAME#v}"
+          else
+            v=$(grep -oPm1 '(?<=<Version>)[^<]+' src/DmcMcp.csproj)
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "publishing version $v"
+
+      - name: Test
+        run: dotnet test tests/DmcMcp.Tests.csproj -v q --nologo
+
+      - name: Pack
+        run: dotnet pack src -c Release -o pkg -p:Version=${{ steps.ver.outputs.version }}
+
+      - name: Attach to the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" pkg/*.nupkg --generate-notes || gh release upload "${GITHUB_REF_NAME}" pkg/*.nupkg --clobber
+
+      # Exchanges the run's OIDC token for a key that lives minutes. Tolerated failure: without a
+      # trusted-publishing policy on nuget.org the step just produces no key and the fallback applies.
+      - name: NuGet login (trusted publishing)
+        id: nuget-login
+        if: github.ref_type == 'tag' && inputs.dry-run != true
+        continue-on-error: true
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER || 'galilenar' }}
+
+      - name: Publish to nuget.org
+        if: github.ref_type == 'tag' && inputs.dry-run != true
+        env:
+          OIDC_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+          SECRET_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          KEY="${OIDC_KEY:-$SECRET_KEY}"
+          if [ -z "$KEY" ]; then
+            echo "::warning::no nuget.org credentials (set up trusted publishing or NUGET_API_KEY) — the package is on the GitHub release only"
+            exit 0
+          fi
+          [ -n "$OIDC_KEY" ] && echo "publishing with a short-lived trusted-publishing key"
+          dotnet nuget push pkg/*.nupkg -s https://api.nuget.org/v3/index.json -k "$KEY" --skip-duplicate
