@@ -160,15 +160,18 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
     public async Task<string> FindPosts(
         [Description("Текст: имя поста, модель станка, слово из описания")] string? query = null,
         [Description("Производитель стойки, например Fanuc")] string? controllerManufacturer = null,
-        [Description("Производитель станка, например Haas")] string? machineManufacturer = null)
+        [Description("Производитель станка, например Haas")] string? machineManufacturer = null,
+        [Description("Тип: POST_PROCESSOR (по умолчанию), MACHINE_SCHEMA, INTERPRETER, DIGITAL_MACHINE_KIT или ANY — все")] string? contentType = "POST_PROCESSOR")
     {
         if (string.IsNullOrWhiteSpace(query) && string.IsNullOrWhiteSpace(controllerManufacturer)
             && string.IsNullOrWhiteSpace(machineManufacturer))
             return "ОШИБКА: укажите хотя бы что-то — текст, стойку или производителя станка.";
+        var (type, typeErr) = NormalizeType(contentType);
+        if (typeErr != null) return typeErr;
 
         var (token, _) = await Token(); // каталог виден и без входа; свои черновики — только с ним
         IReadOnlyList<ProductInfo> published;
-        try { published = await dmc.SearchPublished(query, controllerManufacturer, machineManufacturer, token); }
+        try { published = await dmc.Search(type, query, controllerManufacturer, machineManufacturer, token); }
         catch (DmcHttpException e) { return Explain(e); }
         catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
 
@@ -178,7 +181,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
             try
             {
                 mine = (await dmc.MyProducts(token))
-                    .Where(p => p.ContentType == "POST_PROCESSOR" && Matches(p, query, controllerManufacturer, machineManufacturer))
+                    .Where(p => (type == null || p.ContentType == type) && Matches(p, query, controllerManufacturer, machineManufacturer))
                     .ToList();
             }
             catch (Exception) { /* свои не прочитались — покажем хотя бы каталог */ }
@@ -194,8 +197,21 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
     }
 
     private string Line(ProductInfo p, bool own) =>
-        $"{(own ? "[ваш] " : "")}{p.Name} — {StatusWord(p.PublicationStatus)} — стойка {p.Controller} — "
-        + $"станок {p.Machine} — {p.Url(dmc.Site)} — id {p.Id}";
+        $"{(own ? "[ваш] " : "")}{(p.ContentType == "POST_PROCESSOR" ? "" : $"[{p.ContentType}] ")}{p.Name} — "
+        + $"{StatusWord(p.PublicationStatus)} — стойка {p.Controller} — станок {p.Machine} — {p.Url(dmc.Site)} — id {p.Id}";
+
+    /** Типы компонентов бэкенда (model/ContentType.java). */
+    internal static readonly string[] ContentTypes = { "POST_PROCESSOR", "MACHINE_SCHEMA", "INTERPRETER", "DIGITAL_MACHINE_KIT" };
+
+    /** Тип из параметра: null — любой (ANY, ALL или пусто); иначе одно из ContentTypes. Ошибка — готовым текстом. */
+    private static (string? Type, string? Error) NormalizeType(string? contentType)
+    {
+        var t = (contentType ?? "").Trim().ToUpperInvariant();
+        if (t.Length == 0 || t == "ANY" || t == "ALL") return (null, null);
+        if (!ContentTypes.Contains(t))
+            return (null, $"ОШИБКА: тип «{t}» неизвестен. Есть: " + string.Join(", ", ContentTypes) + ", ANY");
+        return (t, null);
+    }
 
     /** Свои приходят все — фильтр на месте, по тем же полям, по которым каталог ищет query. */
     private static bool Matches(ProductInfo p, string? query, string? controller, string? maker)
@@ -451,7 +467,8 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
     [McpServerTool(Name = "list_my_posts"), Description(
         "Мои посты в DMC с их статусами — что ещё не отправлено на модерацию, что уже в каталоге.")]
     public async Task<string> ListMyPosts(
-        [Description("Только этот статус: DRAFT, PENDING_REVIEW, PUBLISHED, REJECTED, DISABLED, ARCHIVED; пусто — все")] string? status = null)
+        [Description("Только этот статус: DRAFT, PENDING_REVIEW, PUBLISHED, REJECTED, DISABLED, ARCHIVED; пусто — все")] string? status = null,
+        [Description("Тип: POST_PROCESSOR (по умолчанию), MACHINE_SCHEMA, INTERPRETER, DIGITAL_MACHINE_KIT или ANY — все")] string? contentType = "POST_PROCESSOR")
     {
         string? want = null;
         if (!string.IsNullOrWhiteSpace(status))
@@ -459,6 +476,8 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
             want = status.Trim().ToUpperInvariant();
             if (!Statuses.Contains(want)) return $"ОШИБКА: статус «{want}» неизвестен. Есть: " + string.Join(", ", Statuses);
         }
+        var (type, typeErr) = NormalizeType(contentType);
+        if (typeErr != null) return typeErr;
         var (token, err) = await Token();
         if (token == null) return err!;
         IReadOnlyList<ProductInfo> mine;
@@ -466,7 +485,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         catch (DmcHttpException e) { return Explain(e); }
         catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
 
-        var posts = mine.Where(p => p.ContentType == "POST_PROCESSOR" && (want == null || p.PublicationStatus == want)).ToList();
+        var posts = mine.Where(p => (type == null || p.ContentType == type) && (want == null || p.PublicationStatus == want)).ToList();
         if (posts.Count == 0) return want == null ? "У вас пока нет постов в DMC." : $"Постов со статусом «{StatusWord(want)}» нет.";
         var sb = new StringBuilder();
         foreach (var p in posts) sb.AppendLine(Line(p, own: false));

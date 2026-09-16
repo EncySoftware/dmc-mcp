@@ -56,8 +56,8 @@ public interface IDmcClient
     /** Кладёт файл во временное хранилище; возвращает путь tmp/<uploadId>/<file>, который принимает PUT. */
     Task<string> UploadFile(string filePath, string accessToken);
 
-    /** Опубликованные компоненты заданного типа по запросу и фильтрам (POST /products/search). */
-    Task<IReadOnlyList<ProductInfo>> Search(string contentType, string? query, string? controllerManufacturer,
+    /** Опубликованные компоненты по запросу и фильтрам (POST /products/search); contentType null — любого типа. */
+    Task<IReadOnlyList<ProductInfo>> Search(string? contentType, string? query, string? controllerManufacturer,
         string? machineManufacturer, string? accessToken);
     Task<IReadOnlyList<LinkInfo>> GetLinks(string id, string? accessToken);
     /** POST /products/{id}/links: linkType — MADE_FOR (пост → схемы), SUITABLE, KIT_CONTAINS. */
@@ -253,15 +253,15 @@ public class DmcClient : IDmcClient
             : throw new InvalidOperationException("хранилище не вернуло путь файла");
     }
 
-    public async Task<IReadOnlyList<ProductInfo>> Search(string contentType, string? query,
+    public async Task<IReadOnlyList<ProductInfo>> Search(string? contentType, string? query,
         string? controllerManufacturer, string? machineManufacturer, string? accessToken)
     {
         var body = new Dictionary<string, object?>
         {
-            ["contentTypes"] = new[] { contentType },
             ["page"] = 0,
             ["size"] = 20,
         };
+        if (contentType != null) body["contentTypes"] = new[] { contentType };
         if (!string.IsNullOrWhiteSpace(query)) body["query"] = query.Trim();
         if (!string.IsNullOrWhiteSpace(controllerManufacturer)) body["controllerManufacturers"] = new[] { controllerManufacturer.Trim() };
         if (!string.IsNullOrWhiteSpace(machineManufacturer)) body["machineManufacturers"] = new[] { machineManufacturer.Trim() };
