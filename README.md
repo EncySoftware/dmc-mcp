@@ -12,7 +12,14 @@ from Cursor or Claude Code — the DMC counterpart of
 | `check_post_status` | Draft / under review / published, with the link. |
 | `find_posts` | Before uploading: posts already in the catalogue and your own (drafts included) by text, control maker or machine maker — so the agent asks "update this one?" instead of creating a duplicate. |
 | `replace_post_file` | A new version of an existing post: uploads the archive and updates the card; the old archive is removed and licensed copies refreshed. A published post's new archive goes live at once, without re-moderation. |
-| `publish_folder` | Every post in a folder in one import, each its own draft. An optional CSV manifest supplies exact names and fields instead of the AI's guesses. |
+| `publish_folder` | Every component in a folder in one import, each its own draft: post files, and subfolders holding a machine schema (xml + osd) or a kit. An optional CSV manifest supplies exact names and fields instead of the AI's guesses. |
+| `search_schemas` | Machine schemas in the catalogue by text or machine maker — to link a post to them. |
+| `link_post_to_machines` | "Made for" links from a post to the schemas of the machines it targets; the cards then show "made for" / "recommended posts". |
+| `list_my_posts` | Your posts with their statuses, optionally filtered — what is still a draft, what is already in the catalogue. |
+| `delete_post` | Removes your own draft (or a rejected post) uploaded by mistake. Never a published one — unpublishing is a deliberate act in the cabinet. |
+| `generate_description` | An AI description from the card's fields, saved to the card (or only shown with `save=false`). |
+| `regenerate_cover` | A new cover: `archive` — the picture inside the component archive (no AI), `ai` — an AI render. |
+| `generate_sample_code` / `generate_codes_list` | AI-generated sample NC output and the supported G/M-code list, attached to the card. |
 
 Publishing does **not** submit for moderation by itself: the author looks at what the AI filled
 in first.
