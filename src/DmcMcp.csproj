@@ -9,7 +9,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>dmc-mcp</ToolCommandName>
     <PackageId>EncySoftware.DmcMcp</PackageId>
-    <Version>0.3.1</Version>
+    <Version>0.4.0</Version>
     <Authors>EncySoftware</Authors>
     <Description>MCP server for Cursor and Claude Code: publish post-processors to Digital Machine Center</Description>
     <PackageProjectUrl>https://github.com/EncySoftware/dmc-mcp</PackageProjectUrl>
