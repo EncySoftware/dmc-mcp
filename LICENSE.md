@@ -1,0 +1,51 @@
+SprutCAM SDK License Agreement
+------------------------------------
+
+IMPORTANT: READ CAREFULLY BEFORE USING THIS SDK. THIS LICENSE AGREEMENT ("LICENSE") IS A LEGAL AGREEMENT BETWEEN YOU (EITHER AN INDIVIDUAL OR, IF PURCHASED OR OTHERWISE ACQUIRED BY OR FOR AN ENTITY, AN ENTITY) AND Sprut Technology LTD. (COMPANY) FOR THE USE OF THE SprutCAM SDK PACKAGE ("SDK") INCLUDED WITH THIS SOFTWARE DISTRIBUTION.
+
+BY USING THE SDK, YOU AGREE TO BE BOUND BY THE TERMS OF THIS LICENSE. IF YOU DO NOT AGREE TO THE TERMS OF THIS LICENSE, DO NOT USE THE SDK.
+
+
+1. LICENSE GRANT
+
+Sprut Technology Ltd. hereby grants you a worldwide, royalty-free, non-exclusive license to use the SDK solely for the purpose of developing extensions and plugins for SprutCAM, subject to the terms and conditions of this license agreement.
+
+2. RESTRICTIONS
+
+You may not distribute or sublicense the SDK (or any modified version thereof) on its own or as part of another software development kit or software package, except as expressly permitted in Section 3.
+
+3. DISTRIBUTION OF EXTENSIONS
+
+Extensions created using this SDK may be distributed or sold separately under a separate license agreement, subject to the restrictions outlined in this license agreement. It is the responsibility of extension developers to provide their own license terms and conditions for the end users of their extensions.
+
+4. INTELLECTUAL PROPERTY RIGHTS
+
+The SDK is protected by copyright and other intellectual property laws. Sprut Technology Ltd. retains all rights, title, and interest in and to the SDK, and no ownership or intellectual property rights are transferred to you under this license.
+
+5. NO WARRANTIES
+
+Sprut Technology Ltd. provides no warranty for this SDK. The SDK is provided "as is" without warranty of any kind, express or implied, including but not limited to the warranties of fitness for a particular purpose and non-infringement. You bear the risk of using it.
+
+6. TERMS OF USE
+
+Any extensions or plugins developed using this SDK must comply with the terms of use for SprutCAM. End users who wish to use the extensions or plugins must have a valid license for SprutCAM.
+
+7. CHANGES TO THIS AGREEMENT
+
+The Company reserves the right, at its sole discretion, to modify or replace this Agreement at any time. If a revision is material we will provide at least 30 days' notice prior to any new terms taking effect. What constitutes a material change will be determined at the sole discretion of the Company.
+By continuing to access or use the Application after any revisions become effective, You agree to be bound by the revised terms. If You do not agree to the new terms, You are no longer authorized to use the Application.
+
+8. GOVERNING LAW AND JURISDICTION
+
+This license agreement shall be construed in accordance with and governed by the laws of the Republic of Cyprus. Any disputes arising under or in connection with this license agreement shall be subject to the exclusive jurisdiction of the courts of the Republic of Cyprus.
+
+9. CONTACTS
+
+Sprut Technology Ltd., Vakhitova Avenue, building 54, room 1005, Naberezhnye Chelny, 423816, Russia
+
+If you have any questions about this Agreement, You can contact Us:
+- By email: info@sprut.ru
+- By visiting this page on our website: https://sprut.ru/contacts/
+
+--------------------------
+Copyright (c) 1993 Sprut Technology Ltd. All rights reserved.

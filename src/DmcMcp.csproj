@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>DmcMcp</RootNamespace>
+    <AssemblyName>dmc-mcp</AssemblyName>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>dmc-mcp</ToolCommandName>
+    <PackageId>SprutTechnology.DmcMcp</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>SprutCAM Tech</Authors>
+    <Description>MCP server for Cursor and Claude Code: publish post-processors to Digital Machine Center</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseFile>LICENSE.md</PackageLicenseFile>
+    <PackageTags>dmc;ency;sprutcam;mcp;model-context-protocol;dotnet-tool;cursor</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="DmcMcp.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\LICENSE.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" Version="1.4.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+  </ItemGroup>
+</Project>
