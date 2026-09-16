@@ -57,7 +57,7 @@
    `X-AI-*` выше, подсказки URL-encoded. Ответ — `{ importId }`.
 2. `GET /products/bulk-zip/{importId}/progress` каждые 2 с, пока `status` не станет `done`,
    `cancelled` или `error`. `queued` — очередь за чужим импортом, не зависание. Ждёт до 10 минут.
-3. Из `result.components[0].productId` → `GET /products/{id}`: slug, имя, стойка, станок, оси,
+3. Для каждого элемента `result.components` (обычно один) по `productId` → `GET /products/{id}`: slug, имя, стойка, станок, оси,
    описание, обложка.
 
 Создаёт **черновик** (`DRAFT`). На модерацию не отправляет — сначала автор смотрит, что дописал ИИ.
