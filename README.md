@@ -6,13 +6,17 @@ from Cursor or Claude Code — the DMC counterpart of
 
 | Tool | What it does |
 |---|---|
-| `publish_post` | Uploads a `.sppx` / `.dll` / `.stnci` / `.zip` as a draft. The backend unpacks the archive; AI fills in the description, control, machine and cover. Returns the card link. |
+| `publish_post` | Uploads a `.sppx` / `.dll` / `.stnci` / `.zip` as a draft. The backend unpacks the archive; AI fills in the description, control, machine and cover. Looks for similar names in DMC first and stops if it finds any (`force=true` uploads anyway). Returns the card link. |
+| `check_import` | The result of an import that `publish_post` / `publish_folder` did not wait out — by the `importId` they returned. |
+| `audit_drafts` | Your drafts against the moderation rules: ready, or what each one still lacks (name, machine maker, machine type, archive); no cover / no description as a note. |
+| `submit_drafts` | Sends several drafts for moderation at once — ids, or `ALL` for every ready draft; the rest are listed with what they lack. |
+| `describe_post` | The whole card: full description, control and machine, cover, files, price and trial, links — to judge what the AI wrote. |
 | `update_post` | Fixes what the AI guessed wrong: name, description, control, machine, machine type, axes. |
 | `submit_post` | Sends the draft for moderation. If something is missing, it says what. |
 | `check_post_status` | Draft / under review / published, with the link. |
 | `find_posts` | Before uploading: components already in the catalogue and your own (drafts included) by text, control maker or machine maker — so the agent asks "update this one?" instead of creating a duplicate. Posts by default; `contentType` = MACHINE_SCHEMA, INTERPRETER, DIGITAL_MACHINE_KIT or ANY. |
 | `replace_post_file` | A new version of an existing post: uploads the archive and updates the card; the old archive is removed and licensed copies refreshed. A published post's new archive goes live at once, without re-moderation. |
-| `publish_folder` | Every component in a folder in one import, each its own draft: post files, and subfolders holding a machine schema (xml + osd) or a kit. An optional CSV manifest supplies exact names and fields instead of the AI's guesses. |
+| `publish_folder` | Every component in a folder in one import, each its own draft: post files, and subfolders holding a machine schema (xml + osd) or a kit. An optional CSV manifest supplies exact names and fields instead of the AI's guesses; `nameHint` / `descriptionHint` steer the AI. `dryRun=true` shows the plan and uploads nothing; similar names in DMC stop the upload unless `force=true`. |
 | `search_schemas` | Machine schemas in the catalogue by text or machine maker — to link a post to them. |
 | `link_post_to_machines` | "Made for" links from a post to the schemas of the machines it targets; the cards then show "made for" / "recommended posts". |
 | `list_my_posts` | Your posts with their statuses, optionally filtered by status — what is still a draft, what is already in the catalogue. `contentType` = ANY lists every component you own, with its type. |
@@ -61,6 +65,12 @@ afterwards. `--no-login` skips the sign-in.
 Sign-in — `dmc-mcp login` — opens the sign-in page in your browser (licsys account); the tool keeps
 only a refresh token in `%APPDATA%\dmc-mcp\auth.json` and never sees the password. `--password` is
 the fallback for a machine without a browser. A publisher role in DMC is required.
+
+Something not working? `dmc-mcp doctor` checks the sign-in, whether DMC accepts the token and
+grants the publisher role, and whether the server is registered in Cursor and Claude Code — one
+line per check. `setup` and `doctor` also mention a newer version on nuget.org when there is one.
+
+Long imports report progress into the editor (MCP progress notifications) while they run.
 
 By hand instead of `setup` — `login`, plus in `~/.cursor/mcp.json`:
 
