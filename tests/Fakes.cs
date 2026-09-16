@@ -45,6 +45,28 @@ public class FakeDmcClient : IDmcClient
         return Task.FromResult(p);
     }
 
+    /** Что «опубликовано» в каталоге и что «своё» — для поиска дублей; что было загружено — для замены архива. */
+    public List<ProductInfo> Published { get; } = new();
+    public List<ProductInfo> Mine { get; } = new();
+    public List<(string? Query, string? Controller, string? Maker)> Searches { get; } = new();
+    public List<string> Uploads { get; } = new();
+
+    public Task<IReadOnlyList<ProductInfo>> SearchPublished(string? query, string? controllerManufacturer,
+        string? machineManufacturer, string? accessToken)
+    {
+        Searches.Add((query, controllerManufacturer, machineManufacturer));
+        return Task.FromResult<IReadOnlyList<ProductInfo>>(Published);
+    }
+
+    public Task<IReadOnlyList<ProductInfo>> MyProducts(string accessToken) =>
+        Task.FromResult<IReadOnlyList<ProductInfo>>(Mine);
+
+    public Task<string> UploadFile(string filePath, string accessToken)
+    {
+        Uploads.Add(Path.GetFileName(filePath));
+        return Task.FromResult($"tmp/u{Uploads.Count}/{Path.GetFileName(filePath)}");
+    }
+
     /** Карточка поста с полным Raw — из него update_post собирает PUT. */
     public static ProductInfo Post(string id, string name, string status = "DRAFT", string? slug = null,
         string? controller = "Fanuc", string? machineMaker = "Haas", string? machineType = "MILLING")
