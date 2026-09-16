@@ -147,6 +147,31 @@ public class PublishFolderTests : IDisposable
         Assert.Empty(dmc.Starts);
     }
 
+    /** Подпапка — тоже компонент: схема (xml + osd) или кит едут папкой, bulk-zip их распознаёт сам. */
+    [Fact]
+    public async Task SubfoldersBecomeComponentsToo()
+    {
+        var sub = Path.Combine(_dir, "Haas VF-2");
+        Directory.CreateDirectory(Path.Combine(sub, "Images"));
+        File.WriteAllText(Path.Combine(sub, "machine.xml"), "<x/>");
+        File.WriteAllText(Path.Combine(sub, "Images", "m.osd"), "o");
+        var dmc = new FakeDmcClient();
+        dmc.Progress.Enqueue(FakeDmcClient.Done(
+            new ImportComponent("a", "POST_PROCESSOR", "p1", false),
+            new ImportComponent("b", "POST_PROCESSOR", "p2", false),
+            new ImportComponent("Haas VF-2", "MACHINE_SCHEMA", "p3", false)));
+        dmc.Products["p1"] = FakeDmcClient.Post("p1", "a");
+        dmc.Products["p2"] = FakeDmcClient.Post("p2", "b");
+        dmc.Products["p3"] = FakeDmcClient.Post("p3", "Haas VF-2", contentType: "MACHINE_SCHEMA");
+
+        var res = await Tools(dmc).PublishFolder(_dir);
+
+        Assert.Contains("Haas VF-2/machine.xml", dmc.ZipEntries);
+        Assert.Contains("Haas VF-2/Images/m.osd", dmc.ZipEntries);
+        Assert.Contains("Создан черновик: Haas VF-2 (MACHINE_SCHEMA)", res);
+        Assert.Contains("3 черновик", res);
+    }
+
     /** Лишняя строка в manifest — предупреждение в отчёте, а не отказ: остальное заливается. */
     [Fact]
     public async Task AManifestRowForAMissingFileIsReportedNotFatal()

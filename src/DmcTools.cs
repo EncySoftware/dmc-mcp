@@ -263,7 +263,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         "Manifest (CSV: file,name,controllerManufacturer,…) даёт точные имя и поля вместо догадок ИИ. " +
         "На модерацию не отправляет.")]
     public async Task<string> PublishFolder(
-        [Description("Папка с файлами постов (.sppx, .dll, .stnci, .zip); подпапки не смотрим")] string dir,
+        [Description("Папка с компонентами: файлы постов (.sppx, .dll, .stnci, .zip) и подпапки — схема (xml + osd) или кит папкой")] string dir,
         [Description("Путь к CSV-манифесту: колонки file, name, description, controllerManufacturer, " +
                      "controllerSeries, controllerModel, machineManufacturer, machineSeries, machineModel, " +
                      "machineType, numberOfAxes; обязательна только file")] string? manifest = null,
@@ -275,7 +275,10 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
             .Where(f => PostExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
             .ToList();
-        if (files.Count == 0) return $"ОШИБКА: в {dirPath} нет файлов постов (.sppx, .dll, .stnci, .zip).";
+        // Подпапка — тоже компонент: схема (xml + osd) или кит едут папкой, bulk-zip разбирает их сам.
+        var dirs = Directory.GetDirectories(dirPath).OrderBy(d => d, StringComparer.OrdinalIgnoreCase).ToList();
+        if (files.Count == 0 && dirs.Count == 0)
+            return $"ОШИБКА: в {dirPath} нет файлов постов (.sppx, .dll, .stnci, .zip) и нет подпапок.";
 
         Manifest? man = null;
         var notes = new List<string>();
@@ -285,7 +288,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
             if (!File.Exists(mp)) return $"ОШИБКА: manifest {mp} не найден.";
             try { man = Manifest.Parse(mp); }
             catch (InvalidDataException e) { return "ОШИБКА: manifest — " + e.Message; }
-            var present = files.Select(f => Path.GetFileName(f)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var present = files.Concat(dirs).Select(f => Path.GetFileName(f)).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var f in man.Files)
                 if (!present.Contains(f)) notes.Add($"В manifest есть {f}, а его нет в папке — строка пропущена.");
         }
@@ -309,6 +312,17 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
                     for (int n = 2; folderOf.ContainsKey(unique); n++) unique = $"{folder} ({n})";
                     folderOf[unique] = fileName;
                     zip.CreateEntryFromFile(f, unique + "/" + fileName);
+                }
+                foreach (var d in dirs)
+                {
+                    var dirName = Path.GetFileName(d);
+                    var wanted = man?.For(dirName)?.Name;
+                    var folder = SafeFolderName(string.IsNullOrWhiteSpace(wanted) ? dirName : wanted!);
+                    var unique = folder;
+                    for (int n = 2; folderOf.ContainsKey(unique); n++) unique = $"{folder} ({n})";
+                    folderOf[unique] = dirName;
+                    foreach (var f in Directory.GetFiles(d, "*", SearchOption.AllDirectories))
+                        zip.CreateEntryFromFile(f, unique + "/" + Path.GetRelativePath(d, f).Replace('\\', '/'));
                 }
             }
             if (new FileInfo(zipPath).Length > MaxUploadBytes)
@@ -367,6 +381,230 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
             if (putErr != null) { sb.AppendLine($"{c.Name}: manifest не применён — {putErr}"); continue; }
             if (changes.Count > 0) sb.AppendLine($"{c.Name}: из manifest — " + string.Join("; ", changes));
         }
+    }
+
+    // ---------------------------------------------------------------- search_schemas
+
+    [McpServerTool(Name = "search_schemas"), Description(
+        "Найти схемы станков в каталоге — чтобы привязать к ним пост (link_post_to_machines). " +
+        "Хотя бы один критерий: текст (модель или имя станка) или производитель станка.")]
+    public async Task<string> SearchSchemas(
+        [Description("Текст: модель или имя станка, например VF-2")] string? query = null,
+        [Description("Производитель станка, например Haas")] string? machineManufacturer = null)
+    {
+        if (string.IsNullOrWhiteSpace(query) && string.IsNullOrWhiteSpace(machineManufacturer))
+            return "ОШИБКА: укажите текст или производителя станка.";
+        var (token, _) = await Token();
+        IReadOnlyList<ProductInfo> found;
+        try { found = await dmc.Search("MACHINE_SCHEMA", query, null, machineManufacturer, token); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
+        if (found.Count == 0) return "DMC не нашёл схем по этому запросу.";
+        var sb = new StringBuilder();
+        foreach (var p in found)
+            sb.AppendLine($"{p.Name} — станок {p.Machine}"
+                          + (p.MachineType != null ? $", тип {p.MachineType}" : "")
+                          + (p.NumberOfAxes is int n ? $", осей {n}" : "")
+                          + $" — {p.Url(dmc.Site)} — id {p.Id}");
+        return sb.ToString();
+    }
+
+    // -------------------------------------------------------- link_post_to_machines
+
+    [McpServerTool(Name = "link_post_to_machines"), Description(
+        "Привязать пост к схемам станков, для которых он сделан (связь MADE_FOR): на карточках появятся " +
+        "«сделан для» и «рекомендуемые посты». id схем — из search_schemas.")]
+    public async Task<string> LinkPostToMachines(
+        [Description("id поста")] string id,
+        [Description("id схем через запятую или пробел")] string schemaIds)
+    {
+        var ids = schemaIds
+            .Split(new[] { ',', ';', ' ', '\n', '\t' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct().ToList();
+        if (ids.Count == 0) return "ОШИБКА: не передано ни одного id схемы.";
+
+        var (token, err) = await Token();
+        if (token == null) return err!;
+        var (p, getErr) = await Get(id, token);
+        if (p == null) return getErr!;
+        // MADE_FOR идёт только от поста: схему или кит бэкенд отвергнет — говорим раньше него.
+        if (p.ContentType != "POST_PROCESSOR")
+            return $"ОШИБКА: «{p.Name}» — не пост ({p.ContentType}); связь «сделан для» идёт только от поста к схеме.";
+
+        try { await dmc.AddLinks(p.Id, "MADE_FOR", ids, token); }
+        catch (DmcHttpException e) when (e.Status == 400) { return "ОШИБКА: DMC отверг связь — " + ErrorText(e.Body); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
+
+        IReadOnlyList<LinkInfo> links;
+        try { links = await dmc.GetLinks(p.Id, token); }
+        catch (Exception) { links = Array.Empty<LinkInfo>(); }
+        var made = links.Where(l => l.LinkType == "MADE_FOR" && l.Product != null).Select(l => l.Product!.Name).ToList();
+        return $"Пост «{p.Name}» — сделан для: " + (made.Count > 0 ? string.Join(", ", made) : string.Join(", ", ids))
+             + "\nСсылка: " + p.Url(dmc.Site);
+    }
+
+    // ----------------------------------------------------------------- list_my_posts
+
+    internal static readonly string[] Statuses = { "DRAFT", "PENDING_REVIEW", "PUBLISHED", "REJECTED", "DISABLED", "ARCHIVED" };
+
+    [McpServerTool(Name = "list_my_posts"), Description(
+        "Мои посты в DMC с их статусами — что ещё не отправлено на модерацию, что уже в каталоге.")]
+    public async Task<string> ListMyPosts(
+        [Description("Только этот статус: DRAFT, PENDING_REVIEW, PUBLISHED, REJECTED, DISABLED, ARCHIVED; пусто — все")] string? status = null)
+    {
+        string? want = null;
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            want = status.Trim().ToUpperInvariant();
+            if (!Statuses.Contains(want)) return $"ОШИБКА: статус «{want}» неизвестен. Есть: " + string.Join(", ", Statuses);
+        }
+        var (token, err) = await Token();
+        if (token == null) return err!;
+        IReadOnlyList<ProductInfo> mine;
+        try { mine = await dmc.MyProducts(token); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
+
+        var posts = mine.Where(p => p.ContentType == "POST_PROCESSOR" && (want == null || p.PublicationStatus == want)).ToList();
+        if (posts.Count == 0) return want == null ? "У вас пока нет постов в DMC." : $"Постов со статусом «{StatusWord(want)}» нет.";
+        var sb = new StringBuilder();
+        foreach (var p in posts) sb.AppendLine(Line(p, own: false));
+        sb.AppendLine("Итого: " + string.Join(", ",
+            posts.GroupBy(p => p.PublicationStatus).Select(g => $"{StatusWord(g.Key)}: {g.Count()}")));
+        return sb.ToString();
+    }
+
+    // ------------------------------------------------------------------- delete_post
+
+    [McpServerTool(Name = "delete_post"), Description(
+        "Удалить свой черновик (или отклонённый пост) — например, залитый по ошибке. Опубликованное и " +
+        "отправленное на модерацию не удаляет: снятие с публикации делается в кабинете осознанно.")]
+    public async Task<string> DeletePost(
+        [Description("id поста")] string id)
+    {
+        var (token, err) = await Token();
+        if (token == null) return err!;
+        var (p, getErr) = await Get(id, token);
+        if (p == null) return getErr!;
+        if (p.PublicationStatus is not ("DRAFT" or "REJECTED"))
+            return $"ОШИБКА: «{p.Name}» — {StatusWord(p.PublicationStatus)}; удалять можно только черновик или отклонённый. "
+                 + "Снимите с публикации в кабинете.";
+        try { await dmc.DeleteProduct(p.Id, token); }
+        catch (DmcHttpException e) when (e.Status == 409) { return "ОШИБКА: DMC не удаляет — " + ErrorText(e.Body); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
+        return $"Черновик «{p.Name}» удалён.";
+    }
+
+    // ----------------------------------------------------------- ИИ по запросу
+
+    [McpServerTool(Name = "generate_description"), Description(
+        "Сгенерировать описание поста ИИ по полям карточки и сохранить его (save=false — только показать).")]
+    public async Task<string> GenerateDescription(
+        [Description("id поста")] string id,
+        [Description("true (по умолчанию) — записать в карточку; false — только вернуть текст")] bool save = true)
+    {
+        var (token, err) = await Token();
+        if (token == null) return err!;
+        var (p, getErr) = await Get(id, token);
+        if (p == null) return getErr!;
+        string text;
+        try { text = await dmc.GenerateDescription(DmcJson.RequestFrom(p.Raw), token); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: ИИ не ответил: " + e.Message; }
+        if (!save) return text + "\n(не сохранено — save=false)";
+        var (_, putErr) = await PutFields(p, new FieldSet(Description: text), token);
+        return putErr ?? text + "\n(сохранено в карточку)";
+    }
+
+    [McpServerTool(Name = "regenerate_cover"), Description(
+        "Новая обложка поста: archive — картинка из архива компонента (без ИИ), ai — рендер ИИ. Сохраняется в карточку.")]
+    public async Task<string> RegenerateCover(
+        [Description("id поста")] string id,
+        [Description("archive (по умолчанию) или ai")] string source = "archive")
+    {
+        var src = source.Trim().ToLowerInvariant();
+        if (src is not ("archive" or "ai")) return "ОШИБКА: источник обложки — archive или ai.";
+        var (token, err) = await Token();
+        if (token == null) return err!;
+        var (p, getErr) = await Get(id, token);
+        if (p == null) return getErr!;
+
+        string image;
+        try
+        {
+            if (src == "archive")
+            {
+                var file = p.Raw.TryGetProperty("productFile", out var pf) && pf.ValueKind == JsonValueKind.String ? pf.GetString() : null;
+                if (string.IsNullOrEmpty(file)) return "ОШИБКА: у поста нет архива — картинку брать неоткуда.";
+                var found = await dmc.ArchivePreview(file, token);
+                if (found == null) return "В архиве нет картинки — попробуйте source=ai.";
+                image = found;
+            }
+            else image = await dmc.GenerateImage(DmcJson.RequestFrom(p.Raw), token);
+        }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: не удалось получить обложку: " + e.Message; }
+
+        var putErr = await PutRaw(p, "imageUrl", image, token);
+        return putErr ?? $"Обложка «{p.Name}» обновлена (источник: {(src == "archive" ? "архив" : "ИИ")}).\nСсылка: {p.Url(dmc.Site)}";
+    }
+
+    [McpServerTool(Name = "generate_sample_code"), Description(
+        "Сгенерировать ИИ пример NC-кода для поста и прикрепить его к карточке (Sample output code).")]
+    public async Task<string> GenerateSampleCode(
+        [Description("id поста")] string id)
+    {
+        var (token, err) = await Token();
+        if (token == null) return err!;
+        var (p, getErr) = await Get(id, token);
+        if (p == null) return getErr!;
+        string path;
+        try { path = await dmc.GenerateSampleCode(DmcJson.RequestFrom(p.Raw), token); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: ИИ не ответил: " + e.Message; }
+        var putErr = await PutRaw(p, "sampleOutputCodeFile", path, token);
+        return putErr ?? $"Пример NC-кода сгенерирован и прикреплён к «{p.Name}».\nСсылка: {p.Url(dmc.Site)}";
+    }
+
+    [McpServerTool(Name = "generate_codes_list"), Description(
+        "Сгенерировать ИИ список поддерживаемых G/M-кодов поста и прикрепить его к карточке (Supported codes).")]
+    public async Task<string> GenerateCodesList(
+        [Description("id поста")] string id)
+    {
+        var (token, err) = await Token();
+        if (token == null) return err!;
+        var (p, getErr) = await Get(id, token);
+        if (p == null) return getErr!;
+        string path;
+        try { path = await dmc.GenerateCodesList(DmcJson.RequestFrom(p.Raw), token); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: ИИ не ответил: " + e.Message; }
+        var putErr = await PutRaw(p, "supportedCodesFile", path, token);
+        return putErr ?? $"Список кодов сгенерирован и прикреплён к «{p.Name}».\nСсылка: {p.Url(dmc.Site)}";
+    }
+
+    /** Карточка по id — или готовый текст ошибки (404 — и «нет такого», и «чужой черновик»). */
+    private async Task<(ProductInfo? Product, string? Error)> Get(string id, string token)
+    {
+        try
+        {
+            var p = await dmc.GetProduct(id, token);
+            return p == null ? (null, Explain(new DmcHttpException(404, ""))) : (p, null);
+        }
+        catch (DmcHttpException e) { return (null, Explain(e)); }
+        catch (Exception e) { return (null, "ОШИБКА: DMC не ответил: " + e.Message); }
+    }
+
+    /** Полный PUT с одним изменённым полем — для обложки и файлов, которых нет в FieldSet. */
+    private async Task<string?> PutRaw(ProductInfo p, string field, string value, string token)
+    {
+        var body = DmcJson.RequestFrom(p.Raw);
+        body[field] = value;
+        try { await dmc.UpdateProduct(p.Id, body, token); return null; }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
     }
 
     // ------------------------------------------------------------ импорт: общее

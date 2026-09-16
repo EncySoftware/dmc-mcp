@@ -55,7 +55,27 @@ public interface IDmcClient
     Task<IReadOnlyList<ProductInfo>> MyProducts(string accessToken);
     /** Кладёт файл во временное хранилище; возвращает путь tmp/<uploadId>/<file>, который принимает PUT. */
     Task<string> UploadFile(string filePath, string accessToken);
+
+    /** Опубликованные компоненты заданного типа по запросу и фильтрам (POST /products/search). */
+    Task<IReadOnlyList<ProductInfo>> Search(string contentType, string? query, string? controllerManufacturer,
+        string? machineManufacturer, string? accessToken);
+    Task<IReadOnlyList<LinkInfo>> GetLinks(string id, string? accessToken);
+    /** POST /products/{id}/links: linkType — MADE_FOR (пост → схемы), SUITABLE, KIT_CONTAINS. */
+    Task AddLinks(string id, string linkType, IReadOnlyList<string> targetIds, string accessToken);
+    /** DELETE /products/{id}; 409 при активных лицензиях. */
+    Task DeleteProduct(string id, string accessToken);
+
+    // ИИ-помощники формы. Сами ничего не сохраняют: текст или путь tmp/… затем уходит в PUT.
+    Task<string> GenerateDescription(IDictionary<string, object?> productData, string accessToken);
+    Task<string> GenerateImage(IDictionary<string, object?> productData, string accessToken);
+    /** null — в архиве нет картинки (бэкенд отвечает 404). */
+    Task<string?> ArchivePreview(string productFile, string accessToken);
+    Task<string> GenerateSampleCode(IDictionary<string, object?> productData, string accessToken);
+    Task<string> GenerateCodesList(IDictionary<string, object?> productData, string accessToken);
 }
+
+/** Связь с другой карточкой, как её отдаёт GET /products/{id}/links. */
+public record LinkInfo(string Id, string LinkType, string Direction, ProductInfo? Product);
 
 public static class DmcJson
 {
@@ -103,6 +123,16 @@ public static class DmcJson
         var list = new List<ProductInfo>();
         if (arr.ValueKind != JsonValueKind.Array) return list;
         foreach (var e in arr.EnumerateArray()) list.Add(Product(e));
+        return list;
+    }
+
+    public static List<LinkInfo> Links(JsonElement r)
+    {
+        var list = new List<LinkInfo>();
+        if (r.ValueKind != JsonValueKind.Array) return list;
+        foreach (var e in r.EnumerateArray())
+            list.Add(new LinkInfo(Str(e, "id") ?? "", Str(e, "linkType") ?? "", Str(e, "direction") ?? "",
+                e.TryGetProperty("product", out var p) && p.ValueKind == JsonValueKind.Object ? Product(p) : null));
         return list;
     }
 
@@ -221,6 +251,77 @@ public class DmcClient : IDmcClient
         return r.TryGetProperty("path", out var p) && p.ValueKind == JsonValueKind.String
             ? p.GetString()!
             : throw new InvalidOperationException("хранилище не вернуло путь файла");
+    }
+
+    public async Task<IReadOnlyList<ProductInfo>> Search(string contentType, string? query,
+        string? controllerManufacturer, string? machineManufacturer, string? accessToken)
+    {
+        var body = new Dictionary<string, object?>
+        {
+            ["contentTypes"] = new[] { contentType },
+            ["page"] = 0,
+            ["size"] = 20,
+        };
+        if (!string.IsNullOrWhiteSpace(query)) body["query"] = query.Trim();
+        if (!string.IsNullOrWhiteSpace(controllerManufacturer)) body["controllerManufacturers"] = new[] { controllerManufacturer.Trim() };
+        if (!string.IsNullOrWhiteSpace(machineManufacturer)) body["machineManufacturers"] = new[] { machineManufacturer.Trim() };
+        return DmcJson.Products(await PostJson($"{_api}/products/search", body, accessToken));
+    }
+
+    public async Task<IReadOnlyList<LinkInfo>> GetLinks(string id, string? accessToken)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"{_api}/products/{Uri.EscapeDataString(id)}/links");
+        Auth(req, accessToken);
+        return DmcJson.Links(JsonDocument.Parse(await Read(await Http.SendAsync(req))).RootElement);
+    }
+
+    public async Task AddLinks(string id, string linkType, IReadOnlyList<string> targetIds, string accessToken)
+    {
+        await PostJson($"{_api}/products/{Uri.EscapeDataString(id)}/links",
+            new Dictionary<string, object?> { ["linkType"] = linkType, ["targetIds"] = targetIds }, accessToken);
+    }
+
+    public async Task DeleteProduct(string id, string accessToken)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Delete, $"{_api}/products/{Uri.EscapeDataString(id)}");
+        Auth(req, accessToken);
+        await Read(await Http.SendAsync(req));
+    }
+
+    public async Task<string> GenerateDescription(IDictionary<string, object?> productData, string accessToken) =>
+        Field(await PostJson($"{_api}/products/generate-description", productData, accessToken), "description");
+
+    public async Task<string> GenerateImage(IDictionary<string, object?> productData, string accessToken) =>
+        Field(await PostJson($"{_api}/products/generate-image", productData, accessToken), "imageUrl");
+
+    public async Task<string?> ArchivePreview(string productFile, string accessToken)
+    {
+        try
+        {
+            return Field(await PostJson($"{_api}/products/archive-preview",
+                new Dictionary<string, object?> { ["productFile"] = productFile }, accessToken), "imageUrl");
+        }
+        catch (DmcHttpException e) when (e.Status == 404) { return null; }
+    }
+
+    public async Task<string> GenerateSampleCode(IDictionary<string, object?> productData, string accessToken) =>
+        Field(await PostJson($"{_api}/products/generate-sample-code", productData, accessToken), "filename");
+
+    public async Task<string> GenerateCodesList(IDictionary<string, object?> productData, string accessToken) =>
+        Field(await PostJson($"{_api}/products/generate-codes-list", productData, accessToken), "filename");
+
+    private static string Field(JsonElement r, string name) =>
+        r.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String && v.GetString() is { Length: > 0 } s
+            ? s
+            : throw new InvalidOperationException($"DMC не вернул поле {name}");
+
+    private static async Task<JsonElement> PostJson(string url, object body, string? token)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, url)
+        { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
+        Auth(req, token);
+        var text = await Read(await Http.SendAsync(req));
+        return text.Length == 0 ? default : JsonDocument.Parse(text).RootElement.Clone();
     }
 
     private static void Auth(HttpRequestMessage req, string? token)

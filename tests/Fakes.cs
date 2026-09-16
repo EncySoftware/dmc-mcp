@@ -73,13 +73,66 @@ public class FakeDmcClient : IDmcClient
         return Task.FromResult($"tmp/u{Uploads.Count}/{Path.GetFileName(filePath)}");
     }
 
-    /** Карточка поста с полным Raw — из него update_post собирает PUT. */
+    // ---- связи, удаление, ИИ-помощники
+
+    public List<ProductInfo> Schemas { get; } = new();
+    public Dictionary<string, List<LinkInfo>> Links { get; } = new();
+    public List<(string Id, string LinkType, IReadOnlyList<string> Targets)> AddedLinks { get; } = new();
+    public List<string> Deleted { get; } = new();
+    public DmcHttpException? FailDelete { get; set; }
+    public string DescriptionText { get; set; } = "Generated description";
+    /** null — «в архиве нет картинки», как 404 от бэкенда. */
+    public string? ArchiveImage { get; set; } = "tmp/u9/preview.png";
+    public List<string> AiCalls { get; } = new();
+
+    public Task<IReadOnlyList<ProductInfo>> Search(string contentType, string? query, string? controllerManufacturer,
+        string? machineManufacturer, string? accessToken)
+    {
+        Searches.Add((query, controllerManufacturer, machineManufacturer));
+        return Task.FromResult<IReadOnlyList<ProductInfo>>(contentType == "MACHINE_SCHEMA" ? Schemas : Published);
+    }
+
+    public Task<IReadOnlyList<LinkInfo>> GetLinks(string id, string? accessToken) =>
+        Task.FromResult<IReadOnlyList<LinkInfo>>(Links.GetValueOrDefault(id) ?? new List<LinkInfo>());
+
+    public Task AddLinks(string id, string linkType, IReadOnlyList<string> targetIds, string accessToken)
+    {
+        AddedLinks.Add((id, linkType, targetIds));
+        if (!Links.TryGetValue(id, out var list)) Links[id] = list = new List<LinkInfo>();
+        foreach (var tid in targetIds)
+            if (!list.Any(l => l.Product?.Id == tid))
+                list.Add(new LinkInfo("l" + (list.Count + 1), linkType, "OUT",
+                    Products.GetValueOrDefault(tid) ?? Schemas.FirstOrDefault(s => s.Id == tid)));
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteProduct(string id, string accessToken)
+    {
+        if (FailDelete != null) throw FailDelete;
+        Deleted.Add(id);
+        Products.Remove(id);
+        return Task.CompletedTask;
+    }
+
+    public Task<string> GenerateDescription(IDictionary<string, object?> productData, string accessToken)
+    { AiCalls.Add("description"); return Task.FromResult(DescriptionText); }
+    public Task<string> GenerateImage(IDictionary<string, object?> productData, string accessToken)
+    { AiCalls.Add("image"); return Task.FromResult("tmp/u9/ai-cover.png"); }
+    public Task<string?> ArchivePreview(string productFile, string accessToken)
+    { AiCalls.Add("archive-preview"); return Task.FromResult(ArchiveImage); }
+    public Task<string> GenerateSampleCode(IDictionary<string, object?> productData, string accessToken)
+    { AiCalls.Add("sample-code"); return Task.FromResult("tmp/u9/sample.nc"); }
+    public Task<string> GenerateCodesList(IDictionary<string, object?> productData, string accessToken)
+    { AiCalls.Add("codes-list"); return Task.FromResult("tmp/u9/codes.txt"); }
+
+    /** Карточка с полным Raw — из него update_post собирает PUT. По умолчанию пост; contentType — для схем. */
     public static ProductInfo Post(string id, string name, string status = "DRAFT", string? slug = null,
-        string? controller = "Fanuc", string? machineMaker = "Haas", string? machineType = "MILLING")
+        string? controller = "Fanuc", string? machineMaker = "Haas", string? machineType = "MILLING",
+        string contentType = "POST_PROCESSOR")
     {
         var raw = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
         {
-            ["id"] = id, ["slug"] = slug, ["name"] = name, ["contentType"] = "POST_PROCESSOR",
+            ["id"] = id, ["slug"] = slug, ["name"] = name, ["contentType"] = contentType,
             ["category"] = "CNC_MACHINES", ["publicationStatus"] = status,
             ["productFile"] = $"products/{id}/post.zip", ["hasProductFile"] = true, ["downloadCount"] = 7,
             ["controllerManufacturer"] = controller, ["machineManufacturer"] = machineMaker,
