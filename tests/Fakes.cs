@@ -16,11 +16,17 @@ public class FakeDmcClient : IDmcClient
     public Task<ProductInfo?> GetProduct(string idOrSlug, string? accessToken) =>
         Task.FromResult(Products.GetValueOrDefault(idOrSlug));
 
+    /** Что лежало в отправленном zip — инструмент удаляет его сразу после отправки, поэтому смотрим здесь. */
+    public List<string> ZipEntries { get; } = new();
+
     public Task<string> StartImport(string filePath, string importId, bool ai, string? nameHint,
         string? descriptionHint, string accessToken)
     {
         if (FailStart != null) throw FailStart;
         Starts.Add((filePath, importId, ai, nameHint, descriptionHint));
+        if (filePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) && File.Exists(filePath))
+            using (var zip = System.IO.Compression.ZipFile.OpenRead(filePath))
+                foreach (var e in zip.Entries) ZipEntries.Add(e.FullName);
         return Task.FromResult(importId);
     }
 
