@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
 namespace DmcMcp;
@@ -54,14 +55,17 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
     // ------------------------------------------------------------------ publish_post
 
     [McpServerTool(Name = "publish_post"), Description(
-        "Загрузить постпроцессор в Digital Machine Center черновиком: бэкенд разбирает архив, ИИ дописывает " +
-        "описание, стойку, станок и обложку. На модерацию НЕ отправляет — проверьте черновик " +
-        "(update_post поправит поля) и вызовите submit_post.")]
+        "Загрузить компонент (пост, схему, интерпретатор, кит) в Digital Machine Center черновиком: бэкенд " +
+        "разбирает архив, ИИ дописывает описание, стойку, станок и обложку. Перед загрузкой ищет похожие по " +
+        "имени и останавливается, если нашёл (force=true — залить всё равно). На модерацию НЕ отправляет — " +
+        "проверьте черновик (update_post поправит поля) и вызовите submit_post.")]
     public async Task<string> PublishPost(
-        [Description("Путь к файлу поста: .sppx, .dll, .stnci или .zip")] string file,
+        [Description("Путь к файлу: .sppx, .dll, .stnci или .zip")] string file,
         [Description("Подсказка имени компонента, например «Fanuc 0i-MF для Haas VF-2»")] string? name = null,
         [Description("Подсказка для описания: особенности поста, для какого станка")] string? descriptionHint = null,
-        [Description("true (по умолчанию) — ИИ дописывает описание, обложку и метаданные; false — только разбор архива")] bool ai = true)
+        [Description("true (по умолчанию) — ИИ дописывает описание, обложку и метаданные; false — только разбор архива")] bool ai = true,
+        [Description("true — залить, даже если в DMC уже есть похожий по имени")] bool force = false,
+        IProgress<ProgressNotificationValue>? progress = null)
     {
         var path = Path.GetFullPath(file);
         if (!File.Exists(path)) return $"ОШИБКА: файла {path} нет.";
@@ -71,11 +75,18 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         var (token, err) = await Token();
         if (token == null) return err!;
 
-        var (progress, importErr) = await Import(path, ai, name, descriptionHint, token);
-        if (progress == null) return importErr!;
+        // Защита от дублей: в каталоге 165 постов делят 70 имён — ищем ДО загрузки, а не после.
+        if (!force)
+        {
+            var hits = await Similar(string.IsNullOrWhiteSpace(name) ? Path.GetFileNameWithoutExtension(path) : name!, token);
+            if (hits.Count > 0) return SimilarText(hits);
+        }
+
+        var (result, importErr) = await Import(path, ai, name, descriptionHint, token, progress);
+        if (result == null) return importErr!;
 
         var sb = new StringBuilder();
-        await ReportComponents(sb, progress, token);
+        await ReportComponents(sb, result, token);
         sb.AppendLine("Проверьте стойку, станок и описание (update_post поправит), затем submit_post — отправить на модерацию.");
         return sb.ToString();
     }
@@ -274,16 +285,25 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
     /** Лимит одной загрузки в bulk-zip на бэкенде (spring.servlet.multipart, 1 ГБ). */
     internal const long MaxUploadBytes = 1024L * 1024 * 1024;
 
+    /** Что поедет в zip: папка-компонент и откуда она — файл поста или подпапка со схемой/китом. */
+    private sealed record Planned(string Folder, string Source, string Path, bool IsDir, ManifestEntry? Entry);
+
     [McpServerTool(Name = "publish_folder"), Description(
-        "Загрузить все посты из папки одним импортом — каждый становится отдельным черновиком. " +
-        "Manifest (CSV: file,name,controllerManufacturer,…) даёт точные имя и поля вместо догадок ИИ. " +
-        "На модерацию не отправляет.")]
+        "Загрузить все компоненты из папки одним импортом — каждый становится отдельным черновиком: файлы " +
+        "постов и подпапки со схемами или китами. Manifest (CSV: file,name,controllerManufacturer,…) даёт точные " +
+        "имя и поля вместо догадок ИИ. dryRun=true — только показать план. Перед загрузкой ищет похожие по " +
+        "имени и останавливается (force=true — залить всё равно). На модерацию не отправляет.")]
     public async Task<string> PublishFolder(
         [Description("Папка с компонентами: файлы постов (.sppx, .dll, .stnci, .zip) и подпапки — схема (xml + osd) или кит папкой")] string dir,
         [Description("Путь к CSV-манифесту: колонки file, name, description, controllerManufacturer, " +
                      "controllerSeries, controllerModel, machineManufacturer, machineSeries, machineModel, " +
                      "machineType, numberOfAxes; обязательна только file")] string? manifest = null,
-        [Description("true (по умолчанию) — ИИ дописывает описание, обложку и метаданные; false — только разбор архива")] bool ai = true)
+        [Description("true (по умолчанию) — ИИ дописывает описание, обложку и метаданные; false — только разбор архива")] bool ai = true,
+        [Description("Подсказка ИИ по именам — как «Naming legend» в кабинете, например «M3X = 3-axis mill»")] string? nameHint = null,
+        [Description("Подсказка ИИ для описаний")] string? descriptionHint = null,
+        [Description("true — только показать план (компоненты, manifest, похожие в DMC), ничего не отправлять")] bool dryRun = false,
+        [Description("true — залить, даже если в DMC уже есть похожие по имени")] bool force = false,
+        IProgress<ProgressNotificationValue>? progress = null)
     {
         var dirPath = Path.GetFullPath(dir);
         if (!Directory.Exists(dirPath)) return $"ОШИБКА: папки {dirPath} нет.";
@@ -309,55 +329,97 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
                 if (!present.Contains(f)) notes.Add($"В manifest есть {f}, а его нет в папке — строка пропущена.");
         }
 
+        // План: папка на компонент — так bulk-zip делит архив на черновики и берёт имя из папки.
+        var plan = new List<Planned>();
+        var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (path, isDir) in files.Select(f => (f, false)).Concat(dirs.Select(d => (d, true))))
+        {
+            var source = Path.GetFileName(path);
+            var entry = man?.For(source);
+            var folder = SafeFolderName(string.IsNullOrWhiteSpace(entry?.Name)
+                ? (isDir ? source : Path.GetFileNameWithoutExtension(path))
+                : entry!.Name!);
+            var unique = folder;
+            for (int n = 2; taken.Contains(unique); n++) unique = $"{folder} ({n})";
+            taken.Add(unique);
+            plan.Add(new Planned(unique, source, path, isDir, entry));
+        }
+
         var (token, err) = await Token();
         if (token == null) return err!;
 
-        // Папка на компонент: так bulk-zip делит архив на отдельные черновики и берёт имя из папки.
-        var folderOf = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // папка → файл
+        // Похожие — по каждому запланированному имени; в сухом прогоне это справка, иначе — стоп.
+        var similar = new List<(ProductInfo P, bool Own)>();
+        if (dryRun || !force)
+            foreach (var p in plan)
+                foreach (var hit in await Similar(p.Folder, token))
+                    if (similar.All(s => s.P.Id != hit.P.Id)) similar.Add(hit);
+
+        if (dryRun)
+        {
+            var sb = new StringBuilder("Сухой прогон — ничего не отправлено. План:\n");
+            foreach (var p in plan)
+                sb.AppendLine($"{p.Folder} ← {p.Source}" + (p.IsDir ? " (папка)" : "")
+                              + (p.Entry == null ? "" : " (из manifest: " + ManifestSummary(p.Entry) + ")"));
+            foreach (var note in notes) sb.AppendLine(note);
+            if (similar.Count > 0)
+            {
+                sb.AppendLine("Похожие уже есть в DMC:");
+                foreach (var (p, own) in similar) sb.AppendLine(Line(p, own));
+            }
+            return sb.ToString();
+        }
+        if (!force && similar.Count > 0) return SimilarText(similar);
+
+        var folderOf = plan.ToDictionary(p => p.Folder, p => p.Source, StringComparer.OrdinalIgnoreCase);
         var zipPath = Path.Combine(Path.GetTempPath(), "dmc-folder-" + Guid.NewGuid().ToString("N")[..8] + ".zip");
         try
         {
-            using (var zip = System.IO.Compression.ZipFile.Open(zipPath, System.IO.Compression.ZipArchiveMode.Create))
-            {
-                foreach (var f in files)
+            using (var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+                foreach (var p in plan)
                 {
-                    var fileName = Path.GetFileName(f);
-                    var wanted = man?.For(fileName)?.Name;
-                    var folder = SafeFolderName(string.IsNullOrWhiteSpace(wanted) ? Path.GetFileNameWithoutExtension(f) : wanted!);
-                    var unique = folder;
-                    for (int n = 2; folderOf.ContainsKey(unique); n++) unique = $"{folder} ({n})";
-                    folderOf[unique] = fileName;
-                    zip.CreateEntryFromFile(f, unique + "/" + fileName);
+                    if (p.IsDir)
+                        foreach (var f in Directory.GetFiles(p.Path, "*", SearchOption.AllDirectories))
+                            zip.CreateEntryFromFile(f, p.Folder + "/" + Path.GetRelativePath(p.Path, f).Replace('\\', '/'));
+                    else zip.CreateEntryFromFile(p.Path, p.Folder + "/" + p.Source);
                 }
-                foreach (var d in dirs)
-                {
-                    var dirName = Path.GetFileName(d);
-                    var wanted = man?.For(dirName)?.Name;
-                    var folder = SafeFolderName(string.IsNullOrWhiteSpace(wanted) ? dirName : wanted!);
-                    var unique = folder;
-                    for (int n = 2; folderOf.ContainsKey(unique); n++) unique = $"{folder} ({n})";
-                    folderOf[unique] = dirName;
-                    foreach (var f in Directory.GetFiles(d, "*", SearchOption.AllDirectories))
-                        zip.CreateEntryFromFile(f, unique + "/" + Path.GetRelativePath(d, f).Replace('\\', '/'));
-                }
-            }
             if (new FileInfo(zipPath).Length > MaxUploadBytes)
                 return "ОШИБКА: архив получился больше 1 ГБ — разбейте папку на части.";
 
-            var (progress, importErr) = await Import(zipPath, ai, null, null, token);
-            if (progress == null) return importErr!;
+            var (result, importErr) = await Import(zipPath, ai, nameHint, descriptionHint, token, progress);
+            if (result == null) return importErr!;
 
             var sb = new StringBuilder();
             foreach (var note in notes) sb.AppendLine(note);
-            await ReportComponents(sb, progress, token);
-            if (man != null) await ApplyManifest(sb, progress, man, folderOf, token);
-            sb.AppendLine($"Итого {progress.Components.Count} черновик(ов). Проверьте и вызовите submit_post для каждого.");
+            await ReportComponents(sb, result, token);
+            if (man != null) await ApplyManifest(sb, result, man, folderOf, token);
+            sb.AppendLine($"Итого {result.Components.Count} черновик(ов). Проверьте (audit_drafts) и отправьте готовые — "
+                          + "submit_post по одному или submit_drafts(\"ALL\").");
             return sb.ToString();
         }
         finally
         {
             try { File.Delete(zipPath); } catch { /* временный файл */ }
         }
+    }
+
+    /** Коротко, что manifest задаёт для строки: name=…, controllerManufacturer=…. */
+    private static string ManifestSummary(ManifestEntry e)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(e.Name)) parts.Add("name=" + e.Name);
+        var f = e.Fields;
+        void Add(string k, string? v) { if (!string.IsNullOrWhiteSpace(v)) parts.Add($"{k}={v}"); }
+        Add("description", f.Description);
+        Add("controllerManufacturer", f.ControllerManufacturer);
+        Add("controllerSeries", f.ControllerSeries);
+        Add("controllerModel", f.ControllerModel);
+        Add("machineManufacturer", f.MachineManufacturer);
+        Add("machineSeries", f.MachineSeries);
+        Add("machineModel", f.MachineModel);
+        Add("machineType", f.MachineType);
+        if (f.NumberOfAxes is int n) parts.Add("numberOfAxes=" + n);
+        return parts.Count == 0 ? "пусто" : string.Join(", ", parts);
     }
 
     /** Имя папки в zip из имени компонента: символы, запрещённые в путях, — в дефис. */
@@ -626,6 +688,208 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
     }
 
+    // ------------------------------------------------------------------ check_import
+
+    [McpServerTool(Name = "check_import"), Description(
+        "Результат импорта по importId — когда publish_post или publish_folder не дождались конца и отдали id. " +
+        "Ничего не отправляет заново.")]
+    public async Task<string> CheckImport(
+        [Description("importId из ответа publish_post / publish_folder")] string importId,
+        IProgress<ProgressNotificationValue>? progress = null)
+    {
+        var (token, err) = await Token();
+        if (token == null) return err!;
+        var (result, waitErr) = await WaitImport(importId.Trim(), token, progress);
+        if (result == null) return waitErr!;
+        var sb = new StringBuilder();
+        await ReportComponents(sb, result, token);
+        sb.AppendLine("Проверьте черновики (audit_drafts) и отправьте готовые — submit_drafts(\"ALL\").");
+        return sb.ToString();
+    }
+
+    // ------------------------------------------------------------------ audit_drafts
+
+    [McpServerTool(Name = "audit_drafts"), Description(
+        "Проверить свои черновики по правилам модерации: что готово к отправке, чему чего не хватает " +
+        "(имя, производитель станка, тип станка, архив), у кого нет обложки или описания.")]
+    public async Task<string> AuditDrafts()
+    {
+        var (token, err) = await Token();
+        if (token == null) return err!;
+        IReadOnlyList<ProductInfo> mine;
+        try { mine = await dmc.MyProducts(token); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
+
+        var drafts = mine.Where(p => p.PublicationStatus == "DRAFT").ToList();
+        if (drafts.Count == 0) return "Черновиков нет.";
+        var sb = new StringBuilder();
+        int ready = 0;
+        foreach (var p in drafts)
+        {
+            var missing = Missing(p);
+            var soft = new List<string>();
+            if (!p.HasCover) soft.Add("без обложки");
+            if (string.IsNullOrWhiteSpace(p.Description)) soft.Add("без описания");
+            if (missing.Count == 0)
+            {
+                ready++;
+                sb.AppendLine($"{Title(p)} — готов к отправке" + (soft.Count > 0 ? $" ({string.Join(", ", soft)})" : ""));
+            }
+            else
+                sb.AppendLine($"{Title(p)} — не хватает: {string.Join(", ", missing)}" + (soft.Count > 0 ? $"; {string.Join(", ", soft)}" : ""));
+        }
+        sb.AppendLine($"Готовы: {ready}, не готовы: {drafts.Count - ready}. Отправить готовые — submit_drafts(\"ALL\").");
+        return sb.ToString();
+    }
+
+    // ----------------------------------------------------------------- submit_drafts
+
+    [McpServerTool(Name = "submit_drafts"), Description(
+        "Отправить на модерацию несколько черновиков: id через запятую или ALL — все свои готовые. " +
+        "Неготовые перечисляет с тем, чего не хватает.")]
+    public async Task<string> SubmitDrafts(
+        [Description("id через запятую, или ALL")] string ids)
+    {
+        var (token, err) = await Token();
+        if (token == null) return err!;
+
+        List<ProductInfo> targets;
+        if (ids.Trim().Equals("ALL", StringComparison.OrdinalIgnoreCase))
+        {
+            IReadOnlyList<ProductInfo> mine;
+            try { mine = await dmc.MyProducts(token); }
+            catch (DmcHttpException e) { return Explain(e); }
+            catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
+            targets = mine.Where(p => p.PublicationStatus == "DRAFT").ToList();
+            if (targets.Count == 0) return "У вас нет черновиков.";
+        }
+        else
+        {
+            var list = ids.Split(new[] { ',', ';', ' ', '\n', '\t' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct().ToList();
+            if (list.Count == 0) return "ОШИБКА: не передано ни одного id.";
+            targets = new List<ProductInfo>();
+            foreach (var id in list)
+            {
+                var (p, getErr) = await Get(id, token);
+                if (p == null) return getErr!;
+                targets.Add(p);
+            }
+        }
+
+        var sb = new StringBuilder();
+        foreach (var p in targets)
+        {
+            if (p.PublicationStatus is "PENDING_REVIEW" or "PUBLISHED")
+            {
+                sb.AppendLine($"{Title(p)} — уже {StatusWord(p.PublicationStatus)}");
+                continue;
+            }
+            var missing = Missing(p);
+            if (missing.Count > 0) { sb.AppendLine($"{Title(p)} — не хватает: {string.Join(", ", missing)}"); continue; }
+            try { await dmc.SetStatus(p.Id, "PENDING_REVIEW", token); sb.AppendLine($"{Title(p)} — отправлен на модерацию"); }
+            catch (DmcHttpException e) when (e.Status == 400) { sb.AppendLine($"{Title(p)} — DMC не принял: {ErrorText(e.Body)}"); }
+            catch (DmcHttpException e) { sb.AppendLine($"{Title(p)} — {Explain(e)}"); }
+            catch (Exception e) { sb.AppendLine($"{Title(p)} — DMC не ответил: {e.Message}"); }
+        }
+        return sb.ToString();
+    }
+
+    // ----------------------------------------------------------------- describe_post
+
+    [McpServerTool(Name = "describe_post"), Description(
+        "Полная карточка компонента: описание целиком, стойка и станок, обложка, файлы, цена и триал, связи — " +
+        "чтобы оценить, что дописал ИИ. Принимает id или slug.")]
+    public async Task<string> DescribePost(
+        [Description("id или slug")] string idOrSlug)
+    {
+        var (token, _) = await Token(); // опубликованное видно и без входа
+        ProductInfo? p;
+        try { p = await dmc.GetProduct(idOrSlug, token); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
+        if (p == null) return $"DMC не нашёл «{idOrSlug}» — нет такого, или это чужой черновик.";
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"{p.Name} [{p.ContentType}] — {StatusWord(p.PublicationStatus)}");
+        sb.AppendLine($"Ссылка: {p.Url(dmc.Site)}   id: {p.Id}");
+        sb.AppendLine($"Стойка: {p.Controller}");
+        sb.AppendLine($"Станок: {p.Machine}" + (p.MachineType != null ? $", тип {p.MachineType}" : "")
+                      + (p.NumberOfAxes is int n ? $", осей {n}" : ""));
+        sb.AppendLine("Описание: " + (string.IsNullOrWhiteSpace(p.Description) ? "нет" : p.Description));
+        sb.AppendLine("Обложка: " + (RawStr(p, "imageUrl") ?? "нет"));
+        sb.AppendLine("Архив: " + (RawStr(p, "productFile") ?? "нет"));
+        sb.AppendLine("Пример кода: " + (RawStr(p, "sampleOutputCodeFile") ?? "нет")
+                      + "; список кодов: " + (RawStr(p, "supportedCodesFile") ?? "нет"));
+        var price = RawNum(p, "priceEur");
+        var trial = RawNum(p, "trialDays");
+        sb.AppendLine("Цена: " + (price == null ? "не задана" : price == -1 ? "в составе maintenance" : price == 0 ? "бесплатно" : $"{price} €")
+                      + (trial != null ? $", триал {trial} дн." : ""));
+        IReadOnlyList<LinkInfo> links;
+        try { links = await dmc.GetLinks(p.Id, token); }
+        catch (Exception) { links = Array.Empty<LinkInfo>(); }
+        var named = links.Where(l => l.Product != null).Select(l => $"{l.Product!.Name} ({l.LinkType})").ToList();
+        sb.AppendLine("Связи: " + (named.Count == 0 ? "нет" : string.Join(", ", named)));
+        return sb.ToString();
+    }
+
+    // --------------------------------------------------- готовность и похожие
+
+    /** Чего не хватает для модерации — те же четыре правила, что у бэкенда в updateStatus. */
+    internal static List<string> Missing(ProductInfo p)
+    {
+        var m = new List<string>();
+        if (string.IsNullOrWhiteSpace(p.Name)) m.Add("имя");
+        if (string.IsNullOrWhiteSpace(p.MachineManufacturer)) m.Add("производитель станка");
+        if (p.MachineType == null) m.Add("тип станка");
+        if (string.IsNullOrWhiteSpace(RawStr(p, "productFile"))) m.Add("архив");
+        return m;
+    }
+
+    private static string Title(ProductInfo p) =>
+        string.IsNullOrWhiteSpace(p.Name) ? $"(без имени, id {p.Id})" : $"{p.Name} (id {p.Id})";
+
+    internal static string? RawStr(ProductInfo p, string key) =>
+        p.Raw.ValueKind == JsonValueKind.Object && p.Raw.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String
+            ? v.GetString() : null;
+
+    private static decimal? RawNum(ProductInfo p, string key) =>
+        p.Raw.ValueKind == JsonValueKind.Object && p.Raw.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number
+            ? v.GetDecimal() : null;
+
+    /**
+     * Похожие по имени — опубликованные из каталога и свои любого статуса. Похожим считаем, когда имя
+     * содержит запрос или запрос содержит имя: «Fanuc 0i» найдёт «Fanuc 0i for Haas VF-2». Сбой любого
+     * из источников защиту не валит — заливка важнее справки.
+     */
+    private async Task<List<(ProductInfo P, bool Own)>> Similar(string query, string token)
+    {
+        var q = query.Trim();
+        var hits = new List<(ProductInfo P, bool Own)>();
+        if (q.Length == 0) return hits;
+        static bool Like(ProductInfo p, string q) =>
+            p.Name.Length > 0 && (p.Name.Contains(q, StringComparison.OrdinalIgnoreCase)
+                                  || q.Contains(p.Name, StringComparison.OrdinalIgnoreCase));
+        try { foreach (var p in await dmc.Search(null, q, null, null, token)) if (Like(p, q)) hits.Add((p, false)); }
+        catch (Exception) { /* каталог не ответил — проверим хотя бы своё */ }
+        try
+        {
+            foreach (var p in await dmc.MyProducts(token))
+                if (Like(p, q) && hits.All(h => h.P.Id != p.Id)) hits.Add((p, true));
+        }
+        catch (Exception) { /* свои не прочитались */ }
+        return hits;
+    }
+
+    private string SimilarText(List<(ProductInfo P, bool Own)> hits)
+    {
+        var sb = new StringBuilder("Похожие уже есть:\n");
+        foreach (var (p, own) in hits) sb.AppendLine(Line(p, own));
+        sb.AppendLine("Повторите с force=true, чтобы всё же залить, или обновите существующий: update_post / replace_post_file.");
+        return sb.ToString();
+    }
+
     // ------------------------------------------------------------ импорт: общее
 
     /**
@@ -633,35 +897,52 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
      * ошибки — включая таймаут, когда сервер продолжает без нас.
      */
     internal async Task<(ImportProgress? Progress, string? Error)> Import(string path, bool ai, string? nameHint,
-        string? descriptionHint, string token)
+        string? descriptionHint, string token, IProgress<ProgressNotificationValue>? progress = null)
     {
         string importId = Guid.NewGuid().ToString("N");
         try { importId = await dmc.StartImport(path, importId, ai, nameHint, descriptionHint, token); }
         catch (DmcHttpException e) { return (null, Explain(e)); }
         catch (Exception e) { return (null, "ОШИБКА: не удалось отправить файл в DMC: " + e.Message); }
+        return await WaitImport(importId, token, progress);
+    }
 
+    /**
+     * Ждёт конца импорта по importId: прогресс — или готовый текст (таймаут, ошибка сервера, чужой
+     * id). Прогресс уходит и в редактор, если тот прислал progressToken: на минуты молчания иначе
+     * непонятно, жив ли инструмент.
+     */
+    internal async Task<(ImportProgress? Progress, string? Error)> WaitImport(string importId, string token,
+        IProgress<ProgressNotificationValue>? progress = null)
+    {
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        ImportProgress progress;
+        ImportProgress state;
         while (true)
         {
-            try { progress = await dmc.GetImportProgress(importId, token); }
+            try { state = await dmc.GetImportProgress(importId, token); }
+            catch (DmcHttpException e) when (e.Status == 404) { return (null, $"ОШИБКА: импорт {importId} не найден — старый или чужой."); }
             catch (DmcHttpException e) { return (null, Explain(e)); }
             catch (Exception e) { return (null, $"ОШИБКА: DMC не ответил про импорт {importId}: {e.Message}"); }
-            if (progress.Finished) break;
+            progress?.Report(new ProgressNotificationValue
+            {
+                Progress = state.Done,
+                Total = state.Total > 0 ? state.Total : null,
+                Message = state.Finished ? "готово" : $"{state.Status}: {state.CurrentName}",
+            });
+            if (state.Finished) break;
             // «queued» — очередь за чужим импортом, не зависание; ждём так же.
             if (sw.Elapsed >= MaxWait)
-                return (null, $"Импорт {importId} всё ещё идёт (сейчас: {progress.Status}, {progress.CurrentName}). "
-                            + "Сервер продолжит сам — черновик появится в кабинете DMC в «My components». "
-                            + "Повторно файл не отправляйте.");
+                return (null, $"Импорт {importId} всё ещё идёт (сейчас: {state.Status}, {state.CurrentName}). "
+                            + "Сервер продолжит сам — черновик появится в кабинете DMC в «My components», "
+                            + $"а результат покажет check_import(\"{importId}\"). Повторно файл не отправляйте.");
             await Delay(PollEvery);
         }
 
-        if (progress.Status == "error") return (null, "ОШИБКА импорта: " + (progress.StatusReason ?? "причина не названа"));
-        if (progress.Status == "cancelled") return (null, "Импорт отменён на сервере.");
-        if (progress.Components.Count == 0)
+        if (state.Status == "error") return (null, "ОШИБКА импорта: " + (state.StatusReason ?? "причина не названа"));
+        if (state.Status == "cancelled") return (null, "Импорт отменён на сервере.");
+        if (state.Components.Count == 0)
             return (null, "ОШИБКА: DMC не нашёл в файле компонента."
-                        + (progress.Errors.Count > 0 ? "\n" + string.Join("\n", progress.Errors) : ""));
-        return (progress, null);
+                        + (state.Errors.Count > 0 ? "\n" + string.Join("\n", state.Errors) : ""));
+        return (state, null);
     }
 
     /** Строки отчёта по каждому созданному черновику и по тому, что не принято. */

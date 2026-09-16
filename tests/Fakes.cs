@@ -30,8 +30,14 @@ public class FakeDmcClient : IDmcClient
         return Task.FromResult(importId);
     }
 
-    public Task<ImportProgress> GetImportProgress(string importId, string accessToken) =>
-        Task.FromResult(Progress.Count > 1 ? Progress.Dequeue() : Progress.Peek());
+    /** Как бэкенд отвечает на чужой или старый importId. */
+    public DmcHttpException? FailProgress { get; set; }
+
+    public Task<ImportProgress> GetImportProgress(string importId, string accessToken)
+    {
+        if (FailProgress != null) throw FailProgress;
+        return Task.FromResult(Progress.Count > 1 ? Progress.Dequeue() : Progress.Peek());
+    }
 
     public Task<ProductInfo> UpdateProduct(string id, IDictionary<string, object?> body, string accessToken)
     {
@@ -125,16 +131,26 @@ public class FakeDmcClient : IDmcClient
     public Task<string> GenerateCodesList(IDictionary<string, object?> productData, string accessToken)
     { AiCalls.Add("codes-list"); return Task.FromResult("tmp/u9/codes.txt"); }
 
+    /** Кто «вошёл» в тестах; FailMe — как бэкенд отвечает на протухший токен. */
+    public MeInfo Who { get; set; } = new("tester", new[] { "USER", "DEALER" }, "acc-1", "Test Co");
+    public DmcHttpException? FailMe { get; set; }
+
+    public Task<MeInfo> Me(string accessToken)
+    {
+        if (FailMe != null) throw FailMe;
+        return Task.FromResult(Who);
+    }
+
     /** Карточка с полным Raw — из него update_post собирает PUT. По умолчанию пост; contentType — для схем. */
     public static ProductInfo Post(string id, string name, string status = "DRAFT", string? slug = null,
         string? controller = "Fanuc", string? machineMaker = "Haas", string? machineType = "MILLING",
-        string contentType = "POST_PROCESSOR")
+        string contentType = "POST_PROCESSOR", bool withArchive = true)
     {
         var raw = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
         {
             ["id"] = id, ["slug"] = slug, ["name"] = name, ["contentType"] = contentType,
             ["category"] = "CNC_MACHINES", ["publicationStatus"] = status,
-            ["productFile"] = $"products/{id}/post.zip", ["hasProductFile"] = true, ["downloadCount"] = 7,
+            ["productFile"] = withArchive ? $"products/{id}/post.zip" : null, ["hasProductFile"] = withArchive, ["downloadCount"] = 7,
             ["controllerManufacturer"] = controller, ["machineManufacturer"] = machineMaker,
             ["machineType"] = machineType, ["numberOfAxes"] = 3,
         });

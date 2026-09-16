@@ -47,6 +47,16 @@ public class DmcClientParsingTests
         Assert.False(DmcJson.Progress(J("""{"status":"queued"}""")).Finished);
     }
 
+    /** Поле, которого инструмент не знает (новое на бэкенде), едет в PUT обратно, а не обнуляется. */
+    [Fact]
+    public void RequestFromRoundTripsUnknownFields()
+    {
+        var req = DmcJson.RequestFrom(J("""{"id":"p1","name":"N","brandNewField":"keep me","updatedAt":"2026-09-16"}"""));
+        Assert.Equal("keep me", ((JsonElement)req["brandNewField"]!).GetString());
+        Assert.False(req.ContainsKey("updatedAt"));
+        Assert.False(req.ContainsKey("id"));
+    }
+
     /** Для полного PUT берутся только поля запроса: id, slug и счётчики карточки бэкенд не примет. */
     [Fact]
     public void RequestFromKeepsOnlyRequestFields()
