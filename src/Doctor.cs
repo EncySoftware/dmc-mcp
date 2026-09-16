@@ -64,7 +64,7 @@ public static class Doctor
         {
             var list = await proc.Run("claude", "mcp list");
             if (list.Ok && list.StdOut.Contains(Brand.McpServerName)) Ok("Claude Code: сервер зарегистрирован");
-            else Fail($"Claude Code: сервер не зарегистрирован — `claude mcp add {Brand.McpServerName} -- {Brand.Cli}`");
+            else Fail($"Claude Code: сервер не зарегистрирован для пользователя — `claude mcp add --scope user {Brand.McpServerName} -- {Brand.Cli}`");
         }
 
         write(bad ? "Есть проблемы — см. строки с ✗." : "Всё в порядке.");
