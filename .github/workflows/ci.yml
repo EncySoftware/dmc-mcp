@@ -1,0 +1,23 @@
+# Run the tests on every push and pull request.
+#
+# The gate existed before this file — `dotnet test` — but only in the hands of whoever remembered to
+# type it. That is not a gate, it is a habit, and it protects nothing the moment somebody else pushes.
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet test tests/DmcMcp.Tests.csproj -c Release --nologo

@@ -8,13 +8,15 @@
     <AssemblyName>dmc-mcp</AssemblyName>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>dmc-mcp</ToolCommandName>
-    <PackageId>SprutTechnology.DmcMcp</PackageId>
+    <PackageId>EncySoftware.DmcMcp</PackageId>
     <Version>0.1.0</Version>
-    <Authors>SprutCAM Tech</Authors>
+    <Authors>EncySoftware</Authors>
     <Description>MCP server for Cursor and Claude Code: publish post-processors to Digital Machine Center</Description>
+    <PackageProjectUrl>https://github.com/EncySoftware/dmc-mcp</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/EncySoftware/dmc-mcp</RepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageLicenseFile>LICENSE.md</PackageLicenseFile>
-    <PackageTags>dmc;ency;sprutcam;mcp;model-context-protocol;dotnet-tool;cursor</PackageTags>
+    <PackageTags>ency;encycam;dmc;cam;mcp;model-context-protocol;dotnet-tool;cursor</PackageTags>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="DmcMcp.Tests" />

@@ -1,63 +1,75 @@
 # dmc-mcp
 
-MCP-сервер для публикации постпроцессоров в [Digital Machine Center](https://dmc.encycam.com)
-из Cursor или Claude Code — так же, как `sprutcam-extension-mcp` публикует расширения СПРУТКАМа.
+MCP server for publishing post-processors to [Digital Machine Center](https://dmc.encycam.com)
+from Cursor or Claude Code — the DMC counterpart of
+[ency-extension-mcp](https://github.com/EncySoftware/ency-extension-mcp).
 
-| Инструмент | Что делает |
+| Tool | What it does |
 |---|---|
-| `publish_post` | Загружает `.sppx` / `.dll` / `.stnci` / `.zip` черновиком. Бэкенд разбирает архив, ИИ дописывает описание, стойку, станок и обложку. Возвращает ссылку на карточку. |
-| `update_post` | Поправить поля, которые ИИ угадал неверно: имя, описание, стойка, станок, тип, оси. |
-| `submit_post` | Отправить черновик на модерацию. Если чего-то не хватает — скажет, чего. |
-| `check_post_status` | Черновик / на модерации / опубликован, ссылка. |
+| `publish_post` | Uploads a `.sppx` / `.dll` / `.stnci` / `.zip` as a draft. The backend unpacks the archive; AI fills in the description, control, machine and cover. Returns the card link. |
+| `update_post` | Fixes what the AI guessed wrong: name, description, control, machine, machine type, axes. |
+| `submit_post` | Sends the draft for moderation. If something is missing, it says what. |
+| `check_post_status` | Draft / under review / published, with the link. |
 
-Публикация **не** отправляет на модерацию сама: сначала автор смотрит, что дописал ИИ.
+Publishing does **not** submit for moderation by itself: the author looks at what the AI filled
+in first.
 
-## Установка (Cursor, Claude Code)
+## Install (Cursor, Claude Code)
 
-Нужен .NET 8 SDK.
+Requires the .NET 8 SDK.
 
 ```bash
-dotnet tool install -g SprutTechnology.DmcMcp --add-source <папка с .nupkg>
+dotnet tool install -g EncySoftware.DmcMcp
 dmc-mcp setup
 ```
 
-`setup` прописывает сервер `dmc` в `~/.cursor/mcp.json` (сливая с чужими серверами), регистрирует
-его в Claude Code, если тот установлен, и выполняет вход. После этого редактор нужно перезапустить.
-`--no-login` пропускает вход.
+Until the package is on nuget.org, install from the `.nupkg` attached to the
+[latest release](https://github.com/EncySoftware/dmc-mcp/releases):
+`dotnet tool install -g EncySoftware.DmcMcp --add-source <folder with the .nupkg>`.
 
-Вход — `dmc-mcp login` — открывает страницу входа в браузере (учётная запись licsys); инструмент
-хранит только refresh-токен в `%APPDATA%\dmc-mcp\auth.json` и пароля не видит. `--password` —
-запасной путь без браузера. Нужна роль паблишера в DMC.
+`setup` writes the `dmc` server into `~/.cursor/mcp.json` (merging with your other servers),
+registers it in Claude Code when its CLI is installed, and signs you in. Restart the editor
+afterwards. `--no-login` skips the sign-in.
 
-Руками вместо `setup` — `login` плюс в `~/.cursor/mcp.json`:
+Sign-in — `dmc-mcp login` — opens the sign-in page in your browser (licsys account); the tool keeps
+only a refresh token in `%APPDATA%\dmc-mcp\auth.json` and never sees the password. `--password` is
+the fallback for a machine without a browser. A publisher role in DMC is required.
+
+By hand instead of `setup` — `login`, plus in `~/.cursor/mcp.json`:
 
 ```json
 { "mcpServers": { "dmc": { "command": "dmc-mcp" } } }
 ```
 
-## Как это выглядит
+## What it looks like
 
-1. *«опубликуй пост C:\posts\fanuc-0i.sppx, это Fanuc 0i-MF для Haas VF-2»* → `publish_post` — ссылка
-   на черновик и что заполнил ИИ.
-2. *«стойка не Fanuc, а Siemens 828D»* → `update_post`.
-3. *«отправь на модерацию»* → `submit_post`.
-4. *«опубликовалось?»* → `check_post_status`.
+1. *"publish the post C:\posts\fanuc-0i.sppx, it's Fanuc 0i-MF for a Haas VF-2"* → `publish_post` —
+   a draft link and what the AI filled in.
+2. *"the control is Siemens 828D, not Fanuc"* → `update_post`.
+3. *"submit it for review"* → `submit_post`.
+4. *"is it published?"* → `check_post_status`.
 
-## Настройки
+## Settings
 
-| Переменная | Зачем |
+| Variable | Purpose |
 |---|---|
-| `DMC_API` | другой адрес API (стенд); по умолчанию — из `src/Brand.cs` |
-| `DMC_SITE` | адрес сайта для ссылок на карточку |
-| `DMC_TOKEN` | готовый токен вместо сохранённого входа (отладка, CI) |
-| `DMC_CLIENT_ID`, `DMC_BROWSER_CLIENT_ID`, `DMC_KEYCLOAK_TOKEN_ENDPOINT` | другой клиент или Keycloak |
+| `DMC_API` | another API address (staging); default from `src/Brand.cs` |
+| `DMC_SITE` | site address for card links |
+| `DMC_TOKEN` | a ready token instead of the stored sign-in (debugging, CI) |
+| `DMC_CLIENT_ID`, `DMC_BROWSER_CLIENT_ID`, `DMC_KEYCLOAK_TOKEN_ENDPOINT` | another client or Keycloak |
 
-Все значения, привязывающие инструмент к DMC, лежат в одном файле — `src/Brand.cs`.
+Everything that ties the tool to DMC lives in one file — `src/Brand.cs`.
 
-## Разработка
+## Development
 
 ```bash
-dotnet test tests/DmcMcp.Tests.csproj   # логика; DMC подделан, сети нет
-dotnet run --project src                 # stdio-сервер, говорить с ним JSON-RPC
-dotnet pack src -c Release -o pkg        # .nupkg инструмента
+dotnet test tests/DmcMcp.Tests.csproj   # logic; DMC is faked, no network
+dotnet run --project src                 # stdio server, talk JSON-RPC to it
+dotnet pack src -c Release -o pkg        # the tool's .nupkg
 ```
+
+## Releases
+
+Push a version tag (`v0.1.1`): `publish-tool.yml` runs the tests, packs the tool with that version,
+attaches the `.nupkg` to the GitHub release and publishes it to nuget.org through trusted
+publishing — no key is stored in this repository.
