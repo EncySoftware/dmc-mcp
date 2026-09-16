@@ -85,7 +85,7 @@ public class FakeDmcClient : IDmcClient
     public string? ArchiveImage { get; set; } = "tmp/u9/preview.png";
     public List<string> AiCalls { get; } = new();
 
-    public Task<IReadOnlyList<ProductInfo>> Search(string contentType, string? query, string? controllerManufacturer,
+    public Task<IReadOnlyList<ProductInfo>> Search(string? contentType, string? query, string? controllerManufacturer,
         string? machineManufacturer, string? accessToken)
     {
         Searches.Add((query, controllerManufacturer, machineManufacturer));

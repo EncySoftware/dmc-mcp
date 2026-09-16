@@ -57,6 +57,37 @@ public class FindPostsTests
         Assert.Empty(dmc.Searches);
     }
 
+    /** По умолчанию — только посты; contentType=ANY открывает схемы, интерпретаторы и киты. */
+    [Fact]
+    public async Task OtherTypesOnlyWhenAsked()
+    {
+        var dmc = new FakeDmcClient();
+        dmc.Mine.Add(FakeDmcClient.Post("s1", "Haas VF-2 schema", contentType: "MACHINE_SCHEMA"));
+        dmc.Mine.Add(FakeDmcClient.Post("d1", "Post for VF-2"));
+
+        var posts = await Tools(dmc).FindPosts(query: "VF-2");
+        Assert.DoesNotContain("Haas VF-2 schema", posts);
+
+        var any = await Tools(dmc).FindPosts(query: "VF-2", contentType: "any");
+        Assert.Contains("Haas VF-2 schema", any);
+        Assert.Contains("MACHINE_SCHEMA", any);
+        Assert.Contains("Post for VF-2", any);
+
+        var schemas = await Tools(dmc).FindPosts(query: "VF-2", contentType: "machine_schema");
+        Assert.Contains("Haas VF-2 schema", schemas);
+        Assert.DoesNotContain("Post for VF-2", schemas);
+    }
+
+    [Fact]
+    public async Task RejectsAnUnknownContentType()
+    {
+        var dmc = new FakeDmcClient();
+        var res = await Tools(dmc).FindPosts(query: "x", contentType: "TOOLPATH");
+        Assert.StartsWith("ОШИБКА", res);
+        Assert.Contains("MACHINE_SCHEMA", res);
+        Assert.Empty(dmc.Searches);
+    }
+
     /** Без входа опубликованное всё равно ищется; про свои черновики — честное «не видно». */
     [Fact]
     public async Task WorksWithoutLoginForPublishedOnly()

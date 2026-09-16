@@ -35,6 +35,22 @@ public class HousekeepingTests
         Assert.DoesNotContain("Published B", res);
     }
 
+    /** По умолчанию — посты; contentType=ANY показывает всё своё с типом, конкретный тип — только его. */
+    [Fact]
+    public async Task ListsOtherTypesOnlyWhenAsked()
+    {
+        var any = await Tools(WithMine()).ListMyPosts(contentType: "ANY");
+        Assert.Contains("Some schema", any);
+        Assert.Contains("MACHINE_SCHEMA", any);
+        Assert.Contains("Draft A", any);
+
+        var schemas = await Tools(WithMine()).ListMyPosts(contentType: "machine_schema");
+        Assert.Contains("Some schema", schemas);
+        Assert.DoesNotContain("Draft A", schemas);
+
+        Assert.StartsWith("ОШИБКА", await Tools(WithMine()).ListMyPosts(contentType: "TOOLPATH"));
+    }
+
     [Fact]
     public async Task RejectsAnUnknownStatus()
     {
