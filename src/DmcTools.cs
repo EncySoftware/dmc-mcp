@@ -47,6 +47,76 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         return Describe(p);
     }
 
+    // ------------------------------------------------------------------ publish_post
+
+    /** Что bulk-zip бэкенда принимает как одиночный пост (BulkZipImportService, 2026-09-16). */
+    internal static readonly string[] PostExtensions = { ".sppx", ".dll", ".stnci", ".zip" };
+
+    [McpServerTool(Name = "publish_post"), Description(
+        "Загрузить постпроцессор в Digital Machine Center черновиком: бэкенд разбирает архив, ИИ дописывает " +
+        "описание, стойку, станок и обложку. На модерацию НЕ отправляет — проверьте черновик " +
+        "(update_post поправит поля) и вызовите submit_post.")]
+    public async Task<string> PublishPost(
+        [Description("Путь к файлу поста: .sppx, .dll, .stnci или .zip")] string file,
+        [Description("Подсказка имени компонента, например «Fanuc 0i-MF для Haas VF-2»")] string? name = null,
+        [Description("Подсказка для описания: особенности поста, для какого станка")] string? descriptionHint = null,
+        [Description("true (по умолчанию) — ИИ дописывает описание, обложку и метаданные; false — только разбор архива")] bool ai = true)
+    {
+        var path = Path.GetFullPath(file);
+        if (!File.Exists(path)) return $"ОШИБКА: файла {path} нет.";
+        if (!PostExtensions.Contains(Path.GetExtension(path).ToLowerInvariant()))
+            return $"ОШИБКА: {Path.GetFileName(path)} — не пост. Нужен .sppx, .dll, .stnci или .zip.";
+
+        var (token, err) = await Token();
+        if (token == null) return err!;
+
+        string importId = Guid.NewGuid().ToString("N");
+        try { importId = await dmc.StartImport(path, importId, ai, name, descriptionHint, token); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: не удалось отправить файл в DMC: " + e.Message; }
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        ImportProgress progress;
+        while (true)
+        {
+            try { progress = await dmc.GetImportProgress(importId, token); }
+            catch (DmcHttpException e) { return Explain(e); }
+            catch (Exception e) { return $"ОШИБКА: DMC не ответил про импорт {importId}: {e.Message}"; }
+            if (progress.Finished) break;
+            // «queued» — очередь за чужим импортом, не зависание; ждём так же.
+            if (sw.Elapsed >= MaxWait)
+                return $"Импорт {importId} всё ещё идёт (сейчас: {progress.Status}, {progress.CurrentName}). "
+                     + "Сервер продолжит сам — черновик появится в кабинете DMC в «My components». "
+                     + "Повторно файл не отправляйте.";
+            await Delay(PollEvery);
+        }
+
+        if (progress.Status == "error") return "ОШИБКА импорта: " + (progress.StatusReason ?? "причина не названа");
+        if (progress.Status == "cancelled") return "Импорт отменён на сервере.";
+        if (progress.Components.Count == 0)
+            return "ОШИБКА: DMC не нашёл в файле компонента."
+                 + (progress.Errors.Count > 0 ? "\n" + string.Join("\n", progress.Errors) : "");
+
+        var sb = new StringBuilder();
+        foreach (var c in progress.Components)
+        {
+            sb.AppendLine($"Создан черновик: {c.Name} ({c.ContentType})" + (c.AiEnriched ? ", поля дописал ИИ" : ""));
+            ProductInfo? p = null;
+            try { p = await dmc.GetProduct(c.ProductId, token); }
+            catch (Exception) { /* карточка не прочиталась — ниже отдадим хотя бы id */ }
+            if (p != null)
+            {
+                sb.AppendLine(Describe(p));
+                sb.AppendLine(p.HasCover ? "Обложка: есть" : "Обложка: нет");
+                sb.AppendLine(string.IsNullOrWhiteSpace(p.Description) ? "Описание: нет" : "Описание: есть");
+            }
+            sb.AppendLine($"id: {c.ProductId}");
+        }
+        foreach (var e in progress.Errors) sb.AppendLine("Не принято: " + e);
+        sb.AppendLine("Проверьте стойку, станок и описание (update_post поправит), затем submit_post — отправить на модерацию.");
+        return sb.ToString();
+    }
+
     // ------------------------------------------------------------------- общее
 
     internal string Describe(ProductInfo p)
