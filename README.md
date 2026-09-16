@@ -11,6 +11,8 @@ from Cursor or Claude Code — the DMC counterpart of
 | `audit_drafts` | Your drafts against the moderation rules: ready, or what each one still lacks (name, machine maker, machine type, archive); no cover / no description as a note. |
 | `submit_drafts` | Sends several drafts for moderation at once — ids, or `ALL` for every ready draft; the rest are listed with what they lack. |
 | `describe_post` | The whole card: full description, control and machine, cover, files, price and trial, links — to judge what the AI wrote. |
+| `inspect_archive` | What is inside a component archive — locally, no server, no AI: machine name, axes and travels, equipment, picture, posts, controls mentioned. The facts an agent needs to write the description itself. |
+| `set_cover` | Your own cover picture — from the author or from the agent — uploaded and set on the card. No server AI involved. |
 | `update_post` | Fixes what the AI guessed wrong: name, description, control, machine, machine type, axes. |
 | `submit_post` | Sends the draft for moderation. If something is missing, it says what. |
 | `check_post_status` | Draft / under review / published, with the link. |
@@ -27,6 +29,19 @@ from Cursor or Claude Code — the DMC counterpart of
 
 Publishing does **not** submit for moderation by itself: the author looks at what the AI filled
 in first.
+
+## Two ways to fill in a card
+
+**Server AI (default).** `publish_post` / `publish_folder` with `ai=true`: the backend reads the
+archive and fills the description, control, machine, axes and cover with its own AI — the
+company's keys, one house style, nothing for the author to write.
+
+**Your own agent.** `publish_post(..., ai=false)` uploads the archive and nothing more. Then
+`inspect_archive(file)` hands the agent the facts — machine name, axes and travels, equipment,
+controls mentioned, whether there is a picture inside — and the agent writes the description
+itself, sets the fields with `update_post`, and puts a cover with `set_cover` (its own picture)
+or `regenerate_cover(source: "archive")` (the picture from the archive, no AI). The author sees
+the text before it is saved, and pays for no AI but their own.
 
 ### Manifest for `publish_folder`
 
