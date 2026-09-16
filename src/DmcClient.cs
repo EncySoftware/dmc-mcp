@@ -72,10 +72,19 @@ public interface IDmcClient
     Task<string?> ArchivePreview(string productFile, string accessToken);
     Task<string> GenerateSampleCode(IDictionary<string, object?> productData, string accessToken);
     Task<string> GenerateCodesList(IDictionary<string, object?> productData, string accessToken);
+
+    /** Кто вошёл — GET /auth/me: имя, роли (USER, DEALER = паблишер, ADMIN), id строки DMC. */
+    Task<MeInfo> Me(string accessToken);
 }
 
 /** Связь с другой карточкой, как её отдаёт GET /products/{id}/links. */
 public record LinkInfo(string Id, string LinkType, string Direction, ProductInfo? Product);
+
+/** Ответ /auth/me в объёме, нужном диагностике: роли — по ним видно, может ли человек публиковать. */
+public record MeInfo(string Username, IReadOnlyList<string> Roles, string? AccountId, string? CompanyName)
+{
+    public bool IsPublisher => Roles.Contains("DEALER") || Roles.Contains("ADMIN");
+}
 
 public static class DmcJson
 {
@@ -104,15 +113,18 @@ public static class DmcJson
             Int(r, "done") ?? 0, Int(r, "total") ?? 0, comps, errs);
     }
 
-    /** Поля ProductCreateRequest — ровно те, что бэкенд принимает в PUT. Остальное из карточки не берётся. */
-    public static readonly string[] RequestFields =
+    /**
+     * Поля карточки, которых нет в ProductCreateRequest (ProductDto, 2026-09-16): счётчики, снимки
+     * проверки, даты, владелец. Всё остальное едет в PUT обратно как есть. Именно запрещающий список,
+     * а не разрешающий: новое поле на бэкенде тогда возвращается нетронутым, а не обнуляется молча —
+     * лишний ключ Spring по умолчанию игнорирует, а пропущенный он бы принял за «стереть».
+     */
+    public static readonly string[] ReadOnlyFields =
     {
-        "name", "contentType", "category", "description", "kitContents", "equipment", "minSoftwareVersion",
-        "machineManufacturer", "machineSeries", "machineModel", "machineType", "numberOfAxes",
-        "travelXMm", "travelYMm", "travelZMm", "controllerManufacturer", "controllerSeries", "controllerModel",
-        "units", "unitsList", "priceEur", "productOwner", "authorName", "trialDays",
-        "supportedCodes", "sampleOutputCode", "supportedCodesFile", "sampleOutputCodeFile", "productFile",
-        "imageUrl", "images", "visibility", "publicationStatus", "experienceStatus", "encyTestStatus",
+        "id", "slug", "hasProductFile", "hasSupportedCodesFile", "hasSampleOutputCodeFile",
+        "failedSnapshotFile", "failedSnapshotImage", "failedSnapshotVideo",
+        "passedSnapshotFile", "passedSnapshotImage", "passedSnapshotVideo",
+        "downloadCount", "linkCount", "createdAt", "updatedAt", "publishedAt", "ownerId", "ownerUsername",
     };
 
     /** Список карточек: голый массив или страница Spring ({"content":[…]}). */
@@ -139,8 +151,10 @@ public static class DmcJson
     public static Dictionary<string, object?> RequestFrom(JsonElement product)
     {
         var d = new Dictionary<string, object?>();
-        foreach (var f in RequestFields)
-            if (product.TryGetProperty(f, out var v) && v.ValueKind != JsonValueKind.Null) d[f] = v.Clone();
+        if (product.ValueKind != JsonValueKind.Object) return d;
+        foreach (var prop in product.EnumerateObject())
+            if (!ReadOnlyFields.Contains(prop.Name) && prop.Value.ValueKind != JsonValueKind.Null)
+                d[prop.Name] = prop.Value.Clone();
         return d;
     }
 
@@ -309,6 +323,18 @@ public class DmcClient : IDmcClient
 
     public async Task<string> GenerateCodesList(IDictionary<string, object?> productData, string accessToken) =>
         Field(await PostJson($"{_api}/products/generate-codes-list", productData, accessToken), "filename");
+
+    public async Task<MeInfo> Me(string accessToken)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"{_api}/auth/me");
+        Auth(req, accessToken);
+        var r = JsonDocument.Parse(await Read(await Http.SendAsync(req))).RootElement;
+        var roles = new List<string>();
+        if (r.TryGetProperty("roles", out var rs) && rs.ValueKind == JsonValueKind.Array)
+            foreach (var x in rs.EnumerateArray()) if (x.ValueKind == JsonValueKind.String) roles.Add(x.GetString()!);
+        string? S(string n) => r.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        return new MeInfo(S("username") ?? "", roles, S("accountId"), S("companyName"));
+    }
 
     private static string Field(JsonElement r, string name) =>
         r.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String && v.GetString() is { Length: > 0 } s
