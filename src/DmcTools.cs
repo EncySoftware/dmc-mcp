@@ -834,6 +834,44 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         return sb.ToString();
     }
 
+    // ------------------------------------------------ inspect_archive / set_cover
+
+    [McpServerTool(Name = "inspect_archive"), Description(
+        "Что внутри архива компонента — локально, без сервера и без ИИ: имя станка, оси и ход, оснастка, " +
+        "картинка, посты, упоминания стоек. По этим фактам можно написать описание самому и заполнить поля " +
+        "через update_post — когда серверный ИИ не нужен (publish_post с ai=false).")]
+    public Task<string> InspectArchive(
+        [Description("Путь к .zip / .sppx / .dll / .stnci")] string file) =>
+        Task.FromResult(ArchiveInspector.Inspect(file));
+
+    internal static readonly string[] ImageExtensions = { ".png", ".jpg", ".jpeg", ".webp" };
+
+    [McpServerTool(Name = "set_cover"), Description(
+        "Поставить свою обложку — картинку от автора или от агента: файл уходит в хранилище и подставляется " +
+        "в карточку. Серверный ИИ не участвует.")]
+    public async Task<string> SetCover(
+        [Description("id компонента")] string id,
+        [Description("Путь к картинке: .png, .jpg или .webp")] string file)
+    {
+        var path = Path.GetFullPath(file);
+        if (!File.Exists(path)) return $"ОШИБКА: файла {path} нет.";
+        if (!ImageExtensions.Contains(Path.GetExtension(path).ToLowerInvariant()))
+            return $"ОШИБКА: {Path.GetFileName(path)} — не картинка. Нужен .png, .jpg или .webp.";
+
+        var (token, err) = await Token();
+        if (token == null) return err!;
+        var (p, getErr) = await Get(id, token); // карточку читаем до загрузки: чужой id не должен стоить файла в tmp/
+        if (p == null) return getErr!;
+
+        string staged;
+        try { staged = await dmc.UploadFile(path, token); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: не удалось загрузить файл в DMC: " + e.Message; }
+
+        var putErr = await PutRaw(p, "imageUrl", staged, token);
+        return putErr ?? $"Обложка «{p.Name}» заменена на {Path.GetFileName(path)}.\nСсылка: {p.Url(dmc.Site)}";
+    }
+
     // --------------------------------------------------- готовность и похожие
 
     /** Чего не хватает для модерации — те же четыре правила, что у бэкенда в updateStatus. */
