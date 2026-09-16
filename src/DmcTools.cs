@@ -185,6 +185,37 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         return "Изменено:\n" + string.Join("\n", changes) + "\nСсылка: " + p.Url(dmc.Site);
     }
 
+    // ------------------------------------------------------------------- submit_post
+
+    [McpServerTool(Name = "submit_post"), Description(
+        "Отправить черновик на модерацию. DMC требует имя, производителя станка, тип станка и архив — " +
+        "если чего-то нет, скажет; заполните через update_post и повторите.")]
+    public async Task<string> SubmitPost(
+        [Description("id поста")] string id)
+    {
+        var (token, err) = await Token();
+        if (token == null) return err!;
+
+        ProductInfo? p;
+        try { p = await dmc.GetProduct(id, token); }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
+        if (p == null) return Explain(new DmcHttpException(404, ""));
+        if (p.PublicationStatus is "PENDING_REVIEW" or "PUBLISHED")
+            return $"{p.Name} уже {StatusWord(p.PublicationStatus)} — ничего не менял.\nСсылка: {p.Url(dmc.Site)}";
+
+        try { p = await dmc.SetStatus(id, "PENDING_REVIEW", token); }
+        catch (DmcHttpException e) when (e.Status == 400)
+        {
+            return "ОШИБКА: DMC не принял на модерацию — " + ErrorText(e.Body)
+                 + ". Заполните недостающее через update_post и повторите.";
+        }
+        catch (DmcHttpException e) { return Explain(e); }
+        catch (Exception e) { return "ОШИБКА: DMC не ответил: " + e.Message; }
+
+        return $"{p.Name} отправлен на модерацию — в каталоге появится после одобрения.\nСсылка: {p.Url(dmc.Site)}";
+    }
+
     // ------------------------------------------------------------------- общее
 
     internal string Describe(ProductInfo p)
