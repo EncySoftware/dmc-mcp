@@ -10,7 +10,7 @@ namespace DmcMcp;
 public static class Doctor
 {
     public static async Task<int> Run(IDmcClient dmc, DmcTokenProvider tokens, IProcessRunner proc,
-        string cursorConfigPath, Action<string> write)
+        string cursorConfigPath, string codexHome, Action<string> write)
     {
         bool bad = false;
         void Ok(string s) => write("✓ " + s);
@@ -65,6 +65,19 @@ public static class Doctor
             var list = await proc.Run("claude", "mcp list");
             if (list.Ok && list.StdOut.Contains(Brand.McpServerName)) Ok("Claude Code: сервер зарегистрирован");
             else Fail($"Claude Code: сервер не зарегистрирован для пользователя — `claude mcp add --scope user {Brand.McpServerName} -- {Brand.Cli}`");
+        }
+
+        // ---- Codex: ~/.codex/config.toml; нет Codex на машине — справка, не поломка
+        if (!Directory.Exists(codexHome) && !(await proc.Run("codex", "--version")).Ok)
+            Info("Codex не установлен — это не ошибка");
+        else
+        {
+            string codexConfig = CodexConfig.ConfigPath(codexHome);
+            bool codex = File.Exists(codexConfig)
+                         && CodexConfig.HasServer(File.ReadAllText(codexConfig), Brand.McpServerName);
+            if (codex) Ok($"Codex: сервер {Brand.McpServerName} прописан ({codexConfig})");
+            else Fail($"Codex: сервера {Brand.McpServerName} нет в {codexConfig} — выполните `{Brand.Cli} setup` "
+                      + $"или `codex mcp add {Brand.McpServerName} -- {Brand.Cli}`");
         }
 
         write(bad ? "Есть проблемы — см. строки с ✗." : "Всё в порядке.");

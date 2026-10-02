@@ -19,7 +19,7 @@ if (args.Length > 0 && args[0].Equals("setup", StringComparison.OrdinalIgnoreCas
     if (await VersionCheck.Hint() is { } hint) Console.WriteLine(hint);
     var tokenProvider = new DmcTokenProvider();
     bool console = args.Contains("--password", StringComparer.OrdinalIgnoreCase);
-    return await SetupCommand.Run(SetupCommand.DefaultCursorConfigPath, new ProcessRunner(),
+    return await SetupCommand.Run(SetupCommand.DefaultCursorConfigPath, CodexConfig.DefaultHome, new ProcessRunner(),
         () => File.Exists(DmcTokenProvider.AuthFilePath),
         console ? tokenProvider.LoginInteractive : tokenProvider.LoginBrowser,
         args.Contains("--no-login", StringComparer.OrdinalIgnoreCase), Console.WriteLine);
@@ -30,7 +30,7 @@ if (args.Length > 0 && args[0].Equals("doctor", StringComparison.OrdinalIgnoreCa
 {
     if (await VersionCheck.Hint() is { } hint) Console.WriteLine(hint);
     return await Doctor.Run(new DmcClient(), new DmcTokenProvider(), new ProcessRunner(),
-        SetupCommand.DefaultCursorConfigPath, Console.WriteLine);
+        SetupCommand.DefaultCursorConfigPath, CodexConfig.DefaultHome, Console.WriteLine);
 }
 
 var builder = Host.CreateApplicationBuilder(args);

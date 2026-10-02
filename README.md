@@ -1,7 +1,7 @@
 # dmc-mcp
 
 MCP server for publishing post-processors to [Digital Machine Center](https://dmc.encycam.com)
-from Cursor or Claude Code — the DMC counterpart of
+from Cursor, Claude Code or Codex — the DMC counterpart of
 [ency-extension-mcp](https://github.com/EncySoftware/ency-extension-mcp).
 
 | Tool | What it does |
@@ -60,7 +60,7 @@ Columns: `file`, `name`, `description`, `controllerManufacturer`, `controllerSer
 SWISS, GAS_PLASMA_LASER, ADDITIVE, OTHER), `numberOfAxes`. An unknown column is an error, not a
 silently dropped one.
 
-## Install (Cursor, Claude Code)
+## Install (Cursor, Claude Code, Codex)
 
 Requires the .NET 8 SDK.
 
@@ -74,16 +74,18 @@ Until the package is on nuget.org, install from the `.nupkg` attached to the
 `dotnet tool install -g EncySoftware.DmcMcp --add-source <folder with the .nupkg>`.
 
 `setup` writes the `dmc` server into `~/.cursor/mcp.json` (merging with your other servers),
-registers it in Claude Code when its CLI is installed, and signs you in. Restart the editor
-afterwards. `--no-login` skips the sign-in.
+registers it in Claude Code when its CLI is installed, adds it to Codex's `config.toml` when Codex
+is on the machine (`~/.codex`, or `CODEX_HOME`; the CLI, the IDE extension and the app share that
+file, and nothing else in it is touched), and signs you in. Restart the editor afterwards.
+`--no-login` skips the sign-in. One sign-in serves every editor.
 
 Sign-in — `dmc-mcp login` — opens the sign-in page in your browser (licsys account); the tool keeps
 only a refresh token in `%APPDATA%\dmc-mcp\auth.json` and never sees the password. `--password` is
 the fallback for a machine without a browser. A publisher role in DMC is required.
 
 Something not working? `dmc-mcp doctor` checks the sign-in, whether DMC accepts the token and
-grants the publisher role, and whether the server is registered in Cursor and Claude Code — one
-line per check. `setup` and `doctor` also mention a newer version on nuget.org when there is one.
+grants the publisher role, and whether the server is registered in Cursor, Claude Code and Codex —
+one line per check. `setup` and `doctor` also mention a newer version on nuget.org when there is one.
 
 Long imports report progress into the editor (MCP progress notifications) while they run.
 
@@ -91,6 +93,13 @@ By hand instead of `setup` — `login`, plus in `~/.cursor/mcp.json`:
 
 ```json
 { "mcpServers": { "dmc": { "command": "dmc-mcp" } } }
+```
+
+and for Codex `codex mcp add dmc -- dmc-mcp`, or in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.dmc]
+command = "dmc-mcp"
 ```
 
 ## What it looks like

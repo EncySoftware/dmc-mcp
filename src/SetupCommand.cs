@@ -8,7 +8,8 @@ namespace DmcMcp;
  * started is two commands (install, setup) instead of hand-editing JSON and remembering `login`.
  *
  * Cursor's config is shared with every other MCP server the author uses, so the file is merged,
- * never rewritten. Claude Code is registered through its own CLI when that CLI is present.
+ * never rewritten. Claude Code is registered through its own CLI when that CLI is present, and
+ * Codex through its config.toml when Codex is on the machine ({@link CodexConfig}).
  */
 public static class SetupCommand
 {
@@ -18,7 +19,7 @@ public static class SetupCommand
     public static string DefaultCursorConfigPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cursor", "mcp.json");
 
-    public static async Task<int> Run(string cursorConfigPath, IProcessRunner proc,
+    public static async Task<int> Run(string cursorConfigPath, string codexHome, IProcessRunner proc,
                                      Func<bool> hasLogin, Func<Task<int>> login,
                                      bool noLogin, Action<string> write)
     {
@@ -77,6 +78,23 @@ public static class SetupCommand
                   + $"`claude mcp add --scope user {ServerName} -- {Command}`");
         }
 
+        // ---- Codex (optional): only when it is on the machine — its folder, or its CLI on PATH
+        if (Directory.Exists(codexHome) || (await proc.Run("codex", "--version")).Ok)
+        {
+            string codexConfig = CodexConfig.ConfigPath(codexHome);
+            try
+            {
+                write(CodexConfig.Ensure(codexHome, ServerName, Command)
+                    ? $"Codex: {ServerName} added to {codexConfig}"
+                    : $"Codex: {ServerName} is already configured in {codexConfig}");
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                write($"Codex: could not write {codexConfig} ({e.Message}) — add it manually with "
+                      + $"`codex mcp add {ServerName} -- {Command}`");
+            }
+        }
+
         // ---- store login: setup is the one moment the author is at a terminal
         if (!noLogin && !hasLogin())
         {
@@ -87,7 +105,7 @@ public static class SetupCommand
         }
 
         write("");
-        write("Done — restart Cursor so it picks the server up, then ask it to publish a post.");
+        write("Done — restart your editor so it picks the server up, then ask it to publish a post.");
         return 0;
     }
 }
