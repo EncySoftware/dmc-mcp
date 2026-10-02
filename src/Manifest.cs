@@ -17,6 +17,7 @@ internal sealed class Manifest
     {
         "file", "name", "description", "controllerManufacturer", "controllerSeries", "controllerModel",
         "machineManufacturer", "machineSeries", "machineModel", "machineType", "numberOfAxes",
+        "travelXMm", "travelYMm", "travelZMm",
     };
 
     private readonly Dictionary<string, ManifestEntry> _byFile = new(StringComparer.OrdinalIgnoreCase);
@@ -59,11 +60,21 @@ internal sealed class Manifest
                     throw new InvalidDataException($"строка {i + 1}: numberOfAxes «{axesText}» — не число");
                 axes = n;
             }
+            // Ход по осям — мм, с точкой: запятая в CSV делит колонки.
+            double? Travel(string col)
+            {
+                var text = Cell(col);
+                if (text == null) return null;
+                if (!double.TryParse(text, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var mm))
+                    throw new InvalidDataException($"строка {i + 1}: {col} «{text}» — не число (мм, дробная часть через точку)");
+                return mm;
+            }
             m._byFile[Path.GetFileName(file)] = new ManifestEntry(Cell("name"), new DmcTools.FieldSet(
                 null, Cell("description"),
                 Cell("controllerManufacturer"), Cell("controllerSeries"), Cell("controllerModel"),
                 Cell("machineManufacturer"), Cell("machineSeries"), Cell("machineModel"),
-                Cell("machineType"), axes));
+                Cell("machineType"), axes, Travel("travelXMm"), Travel("travelYMm"), Travel("travelZMm")));
         }
         return m;
     }

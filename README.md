@@ -13,7 +13,7 @@ from Cursor, Claude Code or Codex — the DMC counterpart of
 | `describe_post` | The whole card: full description, control and machine, cover, files, price and trial, links — to judge what the AI wrote. |
 | `inspect_archive` | What is inside a component archive — locally, no server, no AI: machine name, axes and travels, equipment, picture, posts, controls mentioned. The facts an agent needs to write the description itself. |
 | `set_cover` | Your own cover picture — from the author or from the agent — uploaded and set on the card. No server AI involved. |
-| `update_post` | Fixes what the AI guessed wrong: name, description, control, machine, machine type, axes. |
+| `update_post` | Fixes what the AI guessed wrong on any card — post, schema or kit: name, description, control, machine, machine type, axes, travels X/Y/Z (mm). |
 | `submit_post` | Sends the draft for moderation. If something is missing, it says what. |
 | `check_post_status` | Draft / under review / published, with the link. |
 | `find_posts` | Before uploading: components already in the catalogue and your own (drafts included) by text, control maker or machine maker — so the agent asks "update this one?" instead of creating a duplicate. Posts by default; `contentType` = MACHINE_SCHEMA, INTERPRETER, DIGITAL_MACHINE_KIT or ANY. |
@@ -57,8 +57,9 @@ siemens.sppx,Siemens 828D for DMG,Siemens,828D,,DMG MORI,,MILLING,3
 Columns: `file`, `name`, `description`, `controllerManufacturer`, `controllerSeries`,
 `controllerModel`, `machineManufacturer`, `machineSeries`, `machineModel`, `machineType`
 (MILLING, TURNING, MILL_TURN, WIRE_EDM, LASER, PLASMA, WATERJET, GRINDING, ROBOT, EDM, ROUTER,
-SWISS, GAS_PLASMA_LASER, ADDITIVE, OTHER), `numberOfAxes`. An unknown column is an error, not a
-silently dropped one.
+SWISS, GAS_PLASMA_LASER, ADDITIVE, OTHER), `numberOfAxes`, `travelXMm`, `travelYMm`, `travelZMm`
+(mm, decimal point — the comma separates columns). An unknown column is an error, not a silently
+dropped one.
 
 ## Install (Cursor, Claude Code, Codex)
 

@@ -66,4 +66,58 @@ public class UpdatePostTests
         var res = await Tools(new FakeDmcClient()).UpdatePost("nope", name: "x");
         Assert.Contains("не нашёл", res);
     }
+
+    /** A schema card with the work area the archive gave it: X 508 × Y 406.4 × Z 508. */
+    private static FakeDmcClient WithSchema()
+    {
+        var dmc = new FakeDmcClient();
+        var raw = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+        {
+            ["id"] = "s1", ["slug"] = "haas-vf-2", ["name"] = "Haas VF-2", ["contentType"] = "MACHINE_SCHEMA",
+            ["category"] = "CNC_MACHINES", ["publicationStatus"] = "PENDING_REVIEW",
+            ["productFile"] = "products/s1/vf2.zip", ["machineManufacturer"] = "Haas", ["machineType"] = "MILLING",
+            ["numberOfAxes"] = 3, ["travelXMm"] = 508.0, ["travelYMm"] = 406.4, ["travelZMm"] = 508.0,
+        });
+        dmc.Products["s1"] = DmcJson.Product(raw);
+        return dmc;
+    }
+
+    /**
+     * Yuriy, 2026-10-02: after checking 85 cards against the archives, the axis travels of ten were
+     * off and nothing in the tool could set them. They go in like every other field — only the
+     * given one changes, the other two ride along as they were.
+     */
+    [Fact]
+    public async Task SetsAnAxisTravelAndKeepsTheOthers()
+    {
+        var dmc = WithSchema();
+        var res = await Tools(dmc).UpdatePost("s1", travelYMm: 457.2);
+
+        var (_, body) = Assert.Single(dmc.Puts);
+        Assert.Equal(457.2, body["travelYMm"]);
+        Assert.Equal(508.0, ((JsonElement)body["travelXMm"]!).GetDouble());
+        Assert.Equal(508.0, ((JsonElement)body["travelZMm"]!).GetDouble());
+        Assert.Contains("travelYMm: 406.4 → 457.2", res);
+    }
+
+    [Fact]
+    public async Task ATravelTheCardAlreadyHasIsNotAChange()
+    {
+        var dmc = WithSchema();
+        var res = await Tools(dmc).UpdatePost("s1", travelXMm: 508);
+        Assert.Contains("Менять нечего", res);
+        Assert.Empty(dmc.Puts);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    [InlineData(200000)]
+    public async Task RejectsAnImpossibleTravelBeforeWriting(double travel)
+    {
+        var dmc = WithSchema();
+        var res = await Tools(dmc).UpdatePost("s1", travelZMm: travel);
+        Assert.StartsWith("ОШИБКА", res);
+        Assert.Empty(dmc.Puts);
+    }
 }

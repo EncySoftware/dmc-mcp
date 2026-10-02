@@ -94,8 +94,8 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
     // ------------------------------------------------------------------- update_post
 
     [McpServerTool(Name = "update_post"), Description(
-        "Поправить поля черновика, которые ИИ угадал неверно: имя, описание, стойка, станок, тип станка, " +
-        "число осей. Файлы, цену и статус не трогает. Передавайте только то, что меняете.")]
+        "Поправить поля карточки (поста, схемы, кита), которые ИИ угадал неверно: имя, описание, стойка, станок, " +
+        "тип станка, число осей, ход по осям X/Y/Z. Файлы, цену и статус не трогает. Передавайте только то, что меняете.")]
     public async Task<string> UpdatePost(
         [Description("id поста")] string id,
         [Description("Имя компонента")] string? name = null,
@@ -108,11 +108,15 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         [Description("Модель станка, например VF-2")] string? machineModel = null,
         [Description("Тип станка: MILLING, TURNING, MILL_TURN, WIRE_EDM, LASER, PLASMA, WATERJET, GRINDING, " +
                      "ROBOT, EDM, ROUTER, SWISS, GAS_PLASMA_LASER, ADDITIVE, OTHER")] string? machineType = null,
-        [Description("Число осей, от 1 до 12")] int? numberOfAxes = null)
+        [Description("Число осей, от 1 до 12")] int? numberOfAxes = null,
+        [Description("Ход по оси X (рабочая зона), мм, например 508")] double? travelXMm = null,
+        [Description("Ход по оси Y, мм, например 406.4")] double? travelYMm = null,
+        [Description("Ход по оси Z, мм, например 508")] double? travelZMm = null)
     {
         // Проверки до похода в DMC: опечатку в типе станка автор узнаёт сразу, а не после PUT.
         var fields = new FieldSet(name, description, controllerManufacturer, controllerSeries, controllerModel,
-            machineManufacturer, machineSeries, machineModel, machineType, numberOfAxes);
+            machineManufacturer, machineSeries, machineModel, machineType, numberOfAxes,
+            travelXMm, travelYMm, travelZMm);
         var (normalized, fieldErr) = Normalize(fields);
         if (normalized == null) return fieldErr!;
 
@@ -1009,14 +1013,19 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
     internal sealed record FieldSet(string? Name = null, string? Description = null,
         string? ControllerManufacturer = null, string? ControllerSeries = null, string? ControllerModel = null,
         string? MachineManufacturer = null, string? MachineSeries = null, string? MachineModel = null,
-        string? MachineType = null, int? NumberOfAxes = null)
+        string? MachineType = null, int? NumberOfAxes = null,
+        double? TravelXMm = null, double? TravelYMm = null, double? TravelZMm = null)
     {
         public bool IsEmpty => Name == null && Description == null && ControllerManufacturer == null
             && ControllerSeries == null && ControllerModel == null && MachineManufacturer == null
-            && MachineSeries == null && MachineModel == null && MachineType == null && NumberOfAxes == null;
+            && MachineSeries == null && MachineModel == null && MachineType == null && NumberOfAxes == null
+            && TravelXMm == null && TravelYMm == null && TravelZMm == null;
     }
 
-    /** Тип станка — к верхнему регистру и по списку бэкенда; оси — в пределах 1..12. Ошибка — готовым текстом. */
+    /** Самый большой ход, который ещё похож на станок, а не на опечатку (100 м). */
+    private const double MaxTravelMm = 100_000;
+
+    /** Тип станка — к верхнему регистру и по списку бэкенда; оси — в пределах 1..12; ход — положительный. */
     internal static (FieldSet? Fields, string? Error) Normalize(FieldSet f)
     {
         if (f.MachineType != null)
@@ -1027,6 +1036,10 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
             f = f with { MachineType = mt };
         }
         if (f.NumberOfAxes is < 1 or > 12) return (null, "ОШИБКА: число осей — от 1 до 12.");
+        foreach (var (axis, travel) in new[] { ("X", f.TravelXMm), ("Y", f.TravelYMm), ("Z", f.TravelZMm) })
+            if (travel is double t && (t <= 0 || t > MaxTravelMm || double.IsNaN(t)))
+                return (null, $"ОШИБКА: ход по оси {axis} — {t.ToString(System.Globalization.CultureInfo.InvariantCulture)} мм; "
+                              + $"нужно число больше нуля и не больше {MaxTravelMm:0} мм.");
         return (f, null);
     }
 
@@ -1058,6 +1071,20 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
             body["numberOfAxes"] = n;
             changes.Add($"numberOfAxes: {p.NumberOfAxes?.ToString() ?? "—"} → {n}");
         }
+        // Ход по осям: в ProductInfo его нет — старое значение прямо из карточки.
+        void SetTravel(string field, double? value)
+        {
+            if (value is not double v) return;
+            double? old = p.Raw.ValueKind == JsonValueKind.Object && p.Raw.TryGetProperty(field, out var e)
+                          && e.ValueKind == JsonValueKind.Number ? e.GetDouble() : null;
+            if (old is double o && Math.Abs(o - v) < 1e-6) return;
+            body[field] = v;
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            changes.Add($"{field}: {old?.ToString(inv) ?? "—"} → {v.ToString(inv)}");
+        }
+        SetTravel("travelXMm", f.TravelXMm);
+        SetTravel("travelYMm", f.TravelYMm);
+        SetTravel("travelZMm", f.TravelZMm);
         if (changes.Count == 0) return (changes, null);
 
         try { await dmc.UpdateProduct(p.Id, body, token); }

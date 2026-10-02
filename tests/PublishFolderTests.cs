@@ -48,6 +48,24 @@ public class ManifestTests : IDisposable
         var e = Assert.Throws<InvalidDataException>(() => Manifest.Parse(Csv("file,colour\na.sppx,red\n")));
         Assert.Contains("colour", e.Message);
     }
+
+    /** The work area rides in the manifest too; a decimal point, since the comma separates columns. */
+    [Fact]
+    public void ReadsTheAxisTravels()
+    {
+        var m = Manifest.Parse(Csv("file,travelXMm,travelYMm,travelZMm\nvf2.zip,508,406.4,\n"));
+        var e = m.For("vf2.zip")!;
+        Assert.Equal(508, e.Fields.TravelXMm);
+        Assert.Equal(406.4, e.Fields.TravelYMm);
+        Assert.Null(e.Fields.TravelZMm);
+    }
+
+    [Fact]
+    public void ATravelThatIsNotANumberIsAnError()
+    {
+        var e = Assert.Throws<InvalidDataException>(() => Manifest.Parse(Csv("file,travelXMm\nvf2.zip,508mm\n")));
+        Assert.Contains("travelXMm", e.Message);
+    }
 }
 
 /**
