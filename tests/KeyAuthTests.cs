@@ -14,5 +14,10 @@ public class KeyAuthTests
     [Fact] public void WrongHeaderIsOut() => Assert.False(KeyAuth.Check("/mcp", "Bearer nope", Key).Ok);
     [Fact] public void WrongPathKeyIsOut() => Assert.False(KeyAuth.Check("/mcp/" + Key[..^1] + "0", null, Key).Ok);
     [Fact] public void KeyPrefixIsNotTheKey() => Assert.False(KeyAuth.Check("/mcp/" + Key + "x", null, Key).Ok);
+    /** A client configured with the key in the URL that also sends the header must not get a 404. */
+    [Fact] public void KeyInPathIsStrippedWhenTheHeaderIsThereToo() =>
+        Assert.Equal((true, "/mcp"), KeyAuth.Check("/mcp/" + Key, "Bearer " + Key, Key));
+    [Fact] public void KeyInPathBeforeUploadIsStrippedWithTheHeader() =>
+        Assert.Equal((true, "/mcp/upload"), KeyAuth.Check("/mcp/" + Key + "/upload", "Bearer " + Key, Key));
     [Fact] public void OtherPathsAreNotTheServers() => Assert.False(KeyAuth.Check("/api/products", "Bearer " + Key, Key).Ok);
 }

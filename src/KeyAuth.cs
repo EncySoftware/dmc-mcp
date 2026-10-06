@@ -13,9 +13,8 @@ public static class KeyAuth
     public static (bool Ok, string Path) Check(string path, string? authorization, string key)
     {
         if (path != "/mcp" && !path.StartsWith("/mcp/", StringComparison.Ordinal)) return (false, path);
-        if (authorization != null && authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-            && Same(authorization["Bearer ".Length..].Trim(), key))
-            return (true, path);
+        // The path first: a client configured with the key in its URL may send the header too, and the segment
+        // must go either way, or nothing routes and the client sees a 404 that looks like a wrong address.
         if (path.StartsWith("/mcp/", StringComparison.Ordinal))
         {
             var rest = path["/mcp/".Length..];
@@ -23,6 +22,9 @@ public static class KeyAuth
             var segment = slash < 0 ? rest : rest[..slash];
             if (Same(segment, key)) return (true, "/mcp" + (slash < 0 ? "" : rest[slash..]));
         }
+        if (authorization != null && authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+            && Same(authorization["Bearer ".Length..].Trim(), key))
+            return (true, path);
         return (false, path);
     }
 
