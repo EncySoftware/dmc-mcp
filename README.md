@@ -142,7 +142,8 @@ the server; callers need the server's key.
     sh deploy/update.sh 0.8.0
     docker exec -it dmc-mcp dotnet /app/dmc-mcp.dll login --password    # the server's DMC account
 
-then `sh deploy/update.sh <version>` for every release. `docker logs dmc-mcp` says whom the server is signed in as.
+then `sh deploy/update.sh <version>` for every release. Within a minute of the sign-in `docker logs dmc-mcp`
+says whom the server is signed in as, with the roles; it warns if Publisher is missing.
 nginx proxies `/mcp` to `127.0.0.1:8095` without buffering, with 15-minute timeouts and no access log.
 
 ## Development

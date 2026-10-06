@@ -1751,7 +1751,7 @@ Prod changes are confirmed with Lenar before each step; the sign-in is typed by 
 - [ ] Push `main`, tag `v0.8.0` (annotated, English message), wait for `publish-tool` and the package on nuget.org (`curl -s https://api.nuget.org/v3-flatcontainer/encysoftware.dmcmcp/index.json` lists `0.8.0`).
 - [ ] On the server: the first-time commands from the README (data folder, key file), `sh update.sh 0.8.0`.
 - [ ] Lenar: `docker exec -it dmc-mcp dotnet /app/dmc-mcp.dll login --password` with Hermes's account (a licsys user with the Publisher role; no two-factor, no pending required actions).
-- [ ] `docker logs dmc-mcp` shows "Signed in to DMC as …, roles: … DEALER".
+- [ ] Within a minute, `docker logs dmc-mcp` shows "Signed in to DMC as …, roles: … DEALER" (until a publisher is signed in, the server re-checks every minute).
 - [ ] Task 8's nginx commit; after the frontend deploy: `curl -s -o /dev/null -w "%{http_code}" -X POST https://dmc.encycam.com/mcp` → 401; initialize with the key → 200; an upload → `upload:<id>`; `find_posts` through MCP returns posts.
 - [ ] Give Danil the URL and the key (privately), plus the upload command.
 ```
