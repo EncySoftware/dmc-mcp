@@ -38,6 +38,22 @@ public class ZipFolderTests : IDisposable
         Assert.Equal("posts", Path.GetFileName(dir));
     }
 
+    /**
+     * A zip made by the Mac's Finder carries __MACOSX/ with AppleDouble "._" files beside the folder, and .DS_Store
+     * files; neither is a component (._a.sppx even has a post's extension). They are not unpacked at all.
+     */
+    [Fact]
+    public void MacZipLitterIsLeftOut()
+    {
+        var (dir, error) = ZipFolder.Extract(
+            Zip("posts/a.sppx", "posts/b.sppx", "posts/._a.sppx", "posts/.DS_Store", "__MACOSX/posts/._a.sppx", ".DS_Store"),
+            Path.Combine(_dir, "out"));
+        Assert.Null(error);
+        Assert.Equal("posts", Path.GetFileName(dir));
+        Assert.Equal(new[] { "a.sppx", "b.sppx" }, Directory.GetFileSystemEntries(dir!).Select(Path.GetFileName).Order());
+        Assert.False(Directory.Exists(Path.Combine(_dir, "out", "__MACOSX")));
+    }
+
     /** But a single schema folder (xml directly inside) is one component, not the folder to publish. */
     [Fact]
     public void SingleSchemaFolderStaysAComponent()

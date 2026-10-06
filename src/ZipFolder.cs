@@ -4,7 +4,8 @@ namespace DmcMcp;
 
 /// <summary>
 /// publish_folder's folder, sent to the hosted server as a zip: unpacked into a fresh folder with no entry allowed
-/// out of it (absolute paths, drive letters, ".." segments), at most 5000 entries and 1 GB unpacked. A zip of the
+/// out of it (absolute paths, drive letters, ".." segments), at most 5000 entries and 1 GB unpacked, without the
+/// Mac's __MACOSX/ and dot files. A zip of the
 /// folder itself — one top folder and nothing beside it — publishes that folder, unless that folder is a schema
 /// (an .xml directly inside), which is one component.
 /// </summary>
@@ -26,6 +27,14 @@ public static class ZipFolder
         if (error != null) try { Directory.Delete(root, true); } catch { /* nothing was written, or the caller sweeps */ }
         return (dir, error);
     }
+
+    /**
+     * What the Mac's Finder adds to a zip: __MACOSX/ with AppleDouble "._" files, and .DS_Store. Any segment that
+     * is __MACOSX or a dot file is left out — "._a.sppx" even has a post's extension, and __MACOSX beside the
+     * folder would hide that the zip holds one top folder.
+     */
+    internal static bool MacLitter(string entryName) =>
+        entryName.Replace('\\', '/').Split('/').Any(s => s == "__MACOSX" || (s.Length > 1 && s[0] == '.' && s != ".."));
 
     private static (string? Dir, string? Error) Unpack(string zipPath, string root, long maxBytes, string tooBig)
     {
@@ -49,7 +58,8 @@ public static class ZipFolder
             var buffer = new byte[81920];
             foreach (var e in zip.Entries)
             {
-                var dest = Path.GetFullPath(Path.Combine(root, e.FullName.Replace('\\', '/')));
+                if (MacLitter(e.FullName)) continue;
+                var dest =Path.GetFullPath(Path.Combine(root, e.FullName.Replace('\\', '/')));
                 if (!dest.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
                     return (null, $"ERROR: the zip entry \"{e.FullName}\" points outside the folder.");
                 if (e.FullName.EndsWith('/') || e.FullName.EndsWith('\\'))
