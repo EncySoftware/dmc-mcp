@@ -60,7 +60,10 @@ public static class ServeCommand
         configure?.Invoke(builder.Services); // tests replace DMC, the sign-in or the store
         builder.Services
             .AddMcpServer(o => o.ServerInstructions = Instructions)
-            .WithHttpTransport()
+            // Stateless: nothing to lose on a restart, an update or two idle hours — a session would end with each, and
+            // a client that does not re-initialize on 404 stays broken. The tools ask the client nothing (no sampling,
+            // elicitation or roots); progress goes on the call's own response stream.
+            .WithHttpTransport(o => o.Stateless = true)
             .WithTools<DmcTools>();
 
         var app = builder.Build();

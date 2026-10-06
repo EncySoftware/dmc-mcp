@@ -61,6 +61,70 @@ public class ServeTests : IAsyncLifetime
         return await _http.SendAsync(Rpc("/mcp", body, session));
     }
 
+    /**
+     * Every update.sh, every restart and two idle hours used to end the client's session: the next call got 404
+     * "Session not found", and a client that does not re-initialize stayed broken. The server hands out no session
+     * id to hold on to, and a call works on a process that never saw this client's initialize.
+     */
+    [Fact]
+    public async Task TheServerKeepsNoSessionToLose()
+    {
+        var init = await _http.SendAsync(Initialize("/mcp", Key));
+        Assert.Equal(HttpStatusCode.OK, init.StatusCode);
+        Assert.False(init.Headers.Contains("Mcp-Session-Id"));
+
+        await using var restarted = ServeCommand.Build(new[] { "--urls", "http://127.0.0.1:0" }, Key, _data + "-restarted");
+        await restarted.StartAsync();
+        try
+        {
+            using var http = new HttpClient { BaseAddress = new Uri(restarted.Urls.First()) };
+            var resp = await http.SendAsync(Rpc("/mcp", """{"jsonrpc":"2.0","id":2,"method":"tools/list"}""", null));
+            Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+            Assert.Contains("publish_post", await resp.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            await restarted.StopAsync();
+            try { Directory.Delete(_data + "-restarted", true); } catch { }
+        }
+    }
+
+    /** Without sessions progress still comes — on the call's own response stream, which is what keeps nginx from timing out. */
+    [Fact]
+    public async Task ProgressStillReachesTheCaller()
+    {
+        var data = _data + "-progress";
+        var dmc = new FakeDmcClient();
+        dmc.Progress.Enqueue(new ImportProgress("running", null, "Fanuc", 0, 1, Array.Empty<ImportComponent>(), Array.Empty<string>()));
+        dmc.Progress.Enqueue(FakeDmcClient.Done(new ImportComponent("Fanuc", "POST_PROCESSOR", "p1", AiEnriched: false)));
+        dmc.Products["p1"] = FakeDmcClient.Post("p1", "Fanuc");
+        await using var app = ServeCommand.Build(new[] { "--urls", "http://127.0.0.1:0" }, Key, data, s =>
+        {
+            Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddSingleton<IDmcClient>(s, dmc);
+            Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddSingleton<DmcTokenProvider>(s, new FakeTokens("tok"));
+        });
+        await app.StartAsync();
+        try
+        {
+            using var http = new HttpClient { BaseAddress = new Uri(app.Urls.First()) };
+            var upload = await (await http.SendAsync(Upload(new byte[] { 1, 2 }, "Fanuc.sppx"))).Content.ReadAsStringAsync();
+            var reference = System.Text.RegularExpressions.Regex.Match(upload, "upload:[0-9a-f]{32}").Value;
+            var call = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"publish_post\","
+                     + "\"arguments\":{\"file\":\"" + reference + "\",\"force\":true},\"_meta\":{\"progressToken\":\"p-1\"}}}";
+            var resp = await http.SendAsync(Rpc("/mcp", call, null));
+            var body = await resp.Content.ReadAsStringAsync();
+            Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+            Assert.Contains("notifications/progress", body);
+            Assert.Contains("\"progressToken\":\"p-1\"", body);
+            Assert.Contains("submit_post", body); // the tool's own answer came after
+        }
+        finally
+        {
+            await app.StopAsync();
+            try { Directory.Delete(data, true); } catch { }
+        }
+    }
+
     /** The request's CancellationToken is bound by the SDK — an agent never sees it as a tool argument. */
     [Fact]
     public async Task ToolSchemasDoNotShowTheCancellationToken()

@@ -12,7 +12,9 @@ MCP server on the DMC VPS in its own container, so Danil Yakushev can connect He
 ## What changes
 
 One new mode, `dmc-mcp serve`: the same 21 tools over MCP Streamable HTTP
-(`ModelContextProtocol.AspNetCore` 1.4.1, the same SDK version as today). The stdio mode, `setup`,
+(`ModelContextProtocol.AspNetCore` 1.4.1, the same SDK version as today), stateless — no session for a
+restart, an update or an idle hour to end; the tools ask the client nothing, and progress goes on each
+call's own response stream. The stdio mode, `setup`,
 `login` and `doctor` stay exactly as they are; a publisher running the tool locally sees no
 difference except tool descriptions that also mention the hosted way of passing files.
 
