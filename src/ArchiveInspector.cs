@@ -20,11 +20,15 @@ public static class ArchiveInspector
         "Selca", "Hypertherm", "Beckhoff", "Bosch", "Yaskawa", "Kuka", "ABB", "Hermle", "Makino", "Citizen", "Star",
     };
 
+    /** A machine schema xml is under 100 KB; past this an .xml is not a schema, and reading it costs memory. */
+    internal const long MaxXmlBytes = 16L * 1024 * 1024;
+    private const long MaxTextBytes = 4L * 1024 * 1024;
+
     private static readonly string[] ImageExt = { ".png", ".jpg", ".jpeg", ".bmp", ".webp" };
     private static readonly string[] PostExt = { ".sppx", ".dll" };
     private static readonly string[] TextExt = { ".xml", ".txt", ".json", ".ini", ".cfg", ".sppx", ".stnci", ".md", ".csv" };
 
-    public static string Inspect(string file)
+    public static string Inspect(string file, long maxXmlBytes = MaxXmlBytes)
     {
         var path = Path.GetFullPath(file);
         if (!File.Exists(path)) return $"ERROR: file {path} does not exist.";
@@ -59,15 +63,21 @@ public static class ArchiveInspector
                      : "not recognised";
             sb.AppendLine("Looks like: " + kind);
 
+            // Every read is bounded by bytes actually read, not by the size the zip declares: on the hosted server
+            // anyone with the key sends the archive, and a 1 MB zip can hold a gigabyte of xml.
+            var skipped = new List<string>();
             foreach (var x in xmls)
             {
-                var text = ReadEntry(x);
+                var text = x.Length > maxXmlBytes ? null : ReadEntry(x, maxXmlBytes);
+                if (text == null) { skipped.Add(x.FullName); continue; }
                 var parsed = ParseSchema(text);
                 if (parsed != null) sb.Append(parsed);
                 FindKeywords(text, keywords);
             }
-            foreach (var e in entries.Where(e => Ext(e) != ".xml" && TextExt.Contains(Ext(e)) && e.Length < 4 * 1024 * 1024))
-                FindKeywords(ReadEntry(e), keywords);
+            foreach (var e in entries.Where(e => Ext(e) != ".xml" && TextExt.Contains(Ext(e)) && e.Length < MaxTextBytes))
+                if (ReadEntry(e, MaxTextBytes) is { } text) FindKeywords(text, keywords);
+            if (skipped.Count > 0)
+                sb.AppendLine($"Not read, too large for a schema (over {Size(maxXmlBytes)}): " + string.Join(", ", skipped));
 
             if (posts.Count > 0) sb.AppendLine("Posts: " + string.Join(", ", posts));
             if (interp.Count > 0) sb.AppendLine("Interpreters: " + string.Join(", ", interp));
@@ -169,9 +179,20 @@ public static class ArchiveInspector
 
     private static string Ext(ZipArchiveEntry e) => Path.GetExtension(e.Name).ToLowerInvariant();
 
-    private static string ReadEntry(ZipArchiveEntry e)
+    /** The entry as text, or null when it holds more than limit bytes — counted while reading. */
+    private static string? ReadEntry(ZipArchiveEntry e, long limit)
     {
-        using var r = new StreamReader(e.Open(), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        using var src = e.Open();
+        using var bytes = new MemoryStream();
+        var buf = new byte[81920];
+        int n;
+        while ((n = src.Read(buf, 0, buf.Length)) > 0)
+        {
+            if (bytes.Length + n > limit) return null;
+            bytes.Write(buf, 0, n);
+        }
+        bytes.Position = 0;
+        using var r = new StreamReader(bytes, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
         return r.ReadToEnd();
     }
 

@@ -81,6 +81,35 @@ public class InspectArchiveTests : IDisposable
         Assert.DoesNotContain("Fanuc", res);
     }
 
+    /**
+     * On the hosted server anyone with the key can send an archive: a small zip of a huge .xml must not be read
+     * into memory whole. A real schema xml is under 100 KB; one past the limit is skipped and said so.
+     */
+    [Fact]
+    public void AnOversizedXmlIsSkippedNotRead()
+    {
+        var zip = ZipWith(("machine.xml", "<a>Fanuc" + new string(' ', 200_000) + "</a>"), ("post.sppx", "Siemens"));
+        var res = ArchiveInspector.Inspect(zip, maxXmlBytes: 100_000);
+        Assert.Contains("machine.xml", res);
+        Assert.Contains("too large", res);
+        Assert.DoesNotContain("Fanuc", res);
+        Assert.Contains("Siemens", res); // the rest is still read
+    }
+
+    /** The declared size is the zip's claim; reading stops at the limit whatever the entry says. */
+    [Fact]
+    public void ALyingXmlSizeDoesNotGetItRead()
+    {
+        var path = Path.Combine(_dir, "liar.zip");
+        using (var z = ZipFile.Open(path, ZipArchiveMode.Create))
+        using (var w = new StreamWriter(z.CreateEntry("machine.xml", CompressionLevel.NoCompression).Open()))
+            w.Write("<a>Fanuc" + new string(' ', 200_000) + "</a>");
+        TestZips.DeclareUncompressedSize(path, 10);
+        var res = ArchiveInspector.Inspect(path, maxXmlBytes: 100_000);
+        Assert.Contains("too large", res);
+        Assert.DoesNotContain("Fanuc", res);
+    }
+
     [Fact]
     public void MissingFileIsAnError()
     {
