@@ -5,11 +5,16 @@
 # by UID 1654, then sign in once with the login command the container prints.
 set -eu
 V="${1:?usage: update.sh <version>, e.g. 0.8.0}"
-docker build --build-arg VERSION="$V" -t "dmc-mcp:$V" "https://github.com/EncySoftware/dmc-mcp.git#v$V"
+# --pull: the base images are fetched again, so every release gets the runtime's latest security patches instead of
+# whatever was pulled the first time.
+docker build --pull --build-arg VERSION="$V" -t "dmc-mcp:$V" "https://github.com/EncySoftware/dmc-mcp.git#v$V"
 # The data folder holds the sign-in (an offline refresh token) and the uploads: the container's user only.
 chmod 700 /opt/dmc-mcp/data
 docker rm -f dmc-mcp 2>/dev/null || true
+# The VPS's memory is the backend's: if dmc-mcp ever runs away, the kernel stops this container, not the JVM or
+# Postgres. .NET sizes its heap to the limit.
 docker run -d --name dmc-mcp --restart unless-stopped \
+  --memory 1g --memory-swap 1g --pids-limit 256 \
   -p 127.0.0.1:8095:8080 \
   --env-file /opt/dmc-mcp/dmc-mcp.env \
   -v /opt/dmc-mcp/data:/data \
