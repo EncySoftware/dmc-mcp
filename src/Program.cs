@@ -33,6 +33,10 @@ if (args.Length > 0 && args[0].Equals("doctor", StringComparison.OrdinalIgnoreCa
         SetupCommand.DefaultCursorConfigPath, CodexConfig.DefaultHome, Console.WriteLine);
 }
 
+// `dmc-mcp serve` — the hosted server over HTTP (Hermes on the DMC server); see ServeCommand.
+if (args.Length > 0 && args[0].Equals("serve", StringComparison.OrdinalIgnoreCase))
+    return await ServeCommand.Run(args[1..]);
+
 var builder = Host.CreateApplicationBuilder(args);
 
 // stdout is the MCP protocol; logs go to stderr only.

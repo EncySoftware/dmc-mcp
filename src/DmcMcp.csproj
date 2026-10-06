@@ -27,6 +27,10 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="ModelContextProtocol" Version="1.4.1" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.4.1" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 </Project>
