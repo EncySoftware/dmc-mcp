@@ -13,8 +13,11 @@ namespace DmcMcp;
 /// Every answer is text for a human; an error starts with "ERROR:", and no exception escapes.
 /// </summary>
 [McpServerToolType]
-public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
+public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? inputs = null)
 {
+    /** Where file arguments come from: local paths at home; upload ids and links on the hosted server. */
+    private readonly FileInputs _inputs = inputs ?? FileInputs.Local;
+
     /** Replaced in tests: a real sleep while polling is pointless there. */
     internal Func<TimeSpan, Task> Delay { get; set; } = Task.Delay;
     internal TimeSpan PollEvery { get; set; } = TimeSpan.FromSeconds(2);
@@ -32,6 +35,9 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
 
     internal const string NoLogin =
         "ERROR: not signed in to DMC on this machine — run `" + Brand.Cli + " login` once in a terminal.";
+
+    internal const string HostedNoLogin =
+        "ERROR: the hosted DMC server is not signed in — its operator runs `" + SignInKeepAlive.HostedLoginCommand + "` once.";
 
     // ------------------------------------------------------------- check_post_status
 
@@ -60,15 +66,16 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         "for similar names and stops if it finds any (force=true uploads anyway). Does NOT submit for moderation — " +
         "check the draft (update_post fixes fields) and call submit_post.")]
     public async Task<string> PublishPost(
-        [Description("File path: .sppx, .dll, .stnci or .zip")] string file,
+        [Description("The component file (.sppx, .dll, .stnci or .zip): a local path, or on the hosted server upload:<id> (from POST /mcp/upload) or an https:// link")] string file,
         [Description("Component name hint, e.g. \"Fanuc 0i-MF for Haas VF-2\"")] string? name = null,
         [Description("Description hint: the post's specifics, which machine it is for")] string? descriptionHint = null,
         [Description("true (default) — AI fills in the description, cover and metadata; false — archive parsing only")] bool ai = true,
         [Description("true — upload even if DMC already has one with a similar name")] bool force = false,
         IProgress<ProgressNotificationValue>? progress = null)
     {
-        var path = Path.GetFullPath(file);
-        if (!File.Exists(path)) return $"ERROR: file {path} does not exist.";
+        using var input = await _inputs.File(file);
+        if (input.Error != null) return input.Error;
+        var path = input.Path!;
         if (!PostExtensions.Contains(Path.GetExtension(path).ToLowerInvariant()))
             return $"ERROR: {Path.GetFileName(path)} is not a post. Expected .sppx, .dll, .stnci or .zip.";
 
@@ -246,10 +253,11 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         "without re-moderation.")]
     public async Task<string> ReplacePostFile(
         [Description("Post id")] string id,
-        [Description("Path to the new file: .sppx, .dll, .stnci or .zip")] string file)
+        [Description("The new file (.sppx, .dll, .stnci or .zip): a local path, or on the hosted server upload:<id> or an https:// link")] string file)
     {
-        var path = Path.GetFullPath(file);
-        if (!File.Exists(path)) return $"ERROR: file {path} does not exist.";
+        using var input = await _inputs.File(file);
+        if (input.Error != null) return input.Error;
+        var path = input.Path!;
         if (!PostExtensions.Contains(Path.GetExtension(path).ToLowerInvariant()))
             return $"ERROR: {Path.GetFileName(path)} is not a post. Expected .sppx, .dll, .stnci or .zip.";
 
@@ -298,8 +306,8 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         "names and fields instead of AI guesses. dryRun=true only shows the plan. Before uploading it looks for " +
         "similar names and stops (force=true uploads anyway). Does not submit for moderation.")]
     public async Task<string> PublishFolder(
-        [Description("Folder with components: post files (.sppx, .dll, .stnci, .zip) and subfolders — a schema (xml + osd) or a kit")] string dir,
-        [Description("Path to the CSV manifest: columns file, name, description, controllerManufacturer, " +
+        [Description("Folder with components: post files (.sppx, .dll, .stnci, .zip) and subfolders — a schema (xml + osd) or a kit. On the hosted server: the folder as a zip, upload:<id> or an https:// link")] string dir,
+        [Description("A file name inside the folder, or a path / upload:<id> / https:// link to the CSV manifest: columns file, name, description, controllerManufacturer, " +
                      "controllerSeries, controllerModel, machineManufacturer, machineSeries, machineModel, " +
                      "machineType, numberOfAxes, travelXMm, travelYMm, travelZMm; only file is required")] string? manifest = null,
         [Description("true (default) — AI fills in the description, cover and metadata; false — archive parsing only")] bool ai = true,
@@ -309,8 +317,9 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         [Description("true — upload even if DMC already has ones with similar names")] bool force = false,
         IProgress<ProgressNotificationValue>? progress = null)
     {
-        var dirPath = Path.GetFullPath(dir);
-        if (!Directory.Exists(dirPath)) return $"ERROR: folder {dirPath} does not exist.";
+        using var dirInput = await _inputs.Folder(dir);
+        if (dirInput.Error != null) return dirInput.Error;
+        var dirPath = dirInput.Path!;
         var files = Directory.GetFiles(dirPath)
             .Where(f => PostExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
@@ -324,8 +333,10 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         var notes = new List<string>();
         if (manifest != null)
         {
-            var mp = Path.GetFullPath(manifest);
-            if (!File.Exists(mp)) return $"ERROR: manifest {mp} not found.";
+            using var manifestInput = await ManifestInput(manifest, dirPath);
+            if (manifestInput.Error is { } manifestErr) // say which file the error is about: the folder may be fine
+                return "ERROR: manifest — " + (manifestErr.StartsWith("ERROR: ") ? manifestErr["ERROR: ".Length..] : manifestErr);
+            var mp = manifestInput.Path!;
             try { man = Manifest.Parse(mp); }
             catch (InvalidDataException e) { return "ERROR: manifest — " + e.Message; }
             var present = files.Concat(dirs).Select(f => Path.GetFileName(f)).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -405,6 +416,15 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         {
             try { File.Delete(zipPath); } catch { /* a temporary file */ }
         }
+    }
+
+    /** A manifest named relative to the folder (no path escape), else a path / upload id / link like any file. */
+    private async Task<FileInputs.Input> ManifestInput(string manifest, string dirPath)
+    {
+        var inFolder = Path.GetFullPath(Path.Combine(dirPath, manifest));
+        if (inFolder.StartsWith(Path.GetFullPath(dirPath) + Path.DirectorySeparatorChar, StringComparison.Ordinal) && File.Exists(inFolder))
+            return await FileInputs.Local.File(inFolder);
+        return await _inputs.File(manifest);
     }
 
     /** In short, what the manifest sets for a row: name=…, controllerManufacturer=…. */
@@ -844,9 +864,12 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         "What is inside a component archive — locally, no server and no AI: machine name, axes and travels, " +
         "equipment, picture, posts, controls mentioned. From these facts you can write the description yourself " +
         "and fill in the fields with update_post — when the server AI is not wanted (publish_post with ai=false).")]
-    public Task<string> InspectArchive(
-        [Description("Path to a .zip / .sppx / .dll / .stnci")] string file) =>
-        Task.FromResult(ArchiveInspector.Inspect(file));
+    public async Task<string> InspectArchive(
+        [Description("The archive (.zip / .sppx / .dll / .stnci): a local path, or on the hosted server upload:<id> or an https:// link")] string file)
+    {
+        using var input = await _inputs.File(file);
+        return input.Error ?? ArchiveInspector.Inspect(input.Path!);
+    }
 
     internal static readonly string[] ImageExtensions = { ".png", ".jpg", ".jpeg", ".webp" };
 
@@ -855,10 +878,11 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         "on the card. The server AI is not involved.")]
     public async Task<string> SetCover(
         [Description("Component id")] string id,
-        [Description("Path to the picture: .png, .jpg or .webp")] string file)
+        [Description("The picture (.png, .jpg or .webp): a local path, or on the hosted server upload:<id> or an https:// link")] string file)
     {
-        var path = Path.GetFullPath(file);
-        if (!File.Exists(path)) return $"ERROR: file {path} does not exist.";
+        using var input = await _inputs.File(file);
+        if (input.Error != null) return input.Error;
+        var path = input.Path!;
         if (!ImageExtensions.Contains(Path.GetExtension(path).ToLowerInvariant()))
             return $"ERROR: {Path.GetFileName(path)} is not a picture. Expected .png, .jpg or .webp.";
 
@@ -1141,8 +1165,13 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         try
         {
             var t = await tokens.GetAccessToken();
-            return (t, t == null ? NoLogin : null);
+            return (t, t == null ? (_inputs.Hosted ? HostedNoLogin : NoLogin) : null);
         }
-        catch (InvalidOperationException e) { return (null, "ERROR: " + e.Message); }
+        catch (InvalidOperationException e)
+        {
+            // The provider's message names `dmc-mcp login`; on the hosted server that runs inside the container.
+            return (null, "ERROR: " + e.Message
+                          + (_inputs.Hosted ? " On the hosted server its operator runs `" + SignInKeepAlive.HostedLoginCommand + "`." : ""));
+        }
     }
 }
