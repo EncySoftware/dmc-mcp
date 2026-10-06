@@ -72,6 +72,26 @@ public class ServeTests : IAsyncLifetime
         Assert.DoesNotContain("cancellationToken", body, StringComparison.OrdinalIgnoreCase);
     }
 
+    /** The SDK reads a JSON-RPC body whole into memory: only uploads may be large, /mcp keeps Kestrel's 30 MB. */
+    [Fact]
+    public async Task AHugeJsonRpcBodyIsRefused()
+    {
+        var json = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"x\":\"" + new string('a', 31_000_000) + "\"}}";
+        var resp = await _http.SendAsync(Rpc("/mcp", json, null));
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task AnUploadMayBeLargerThanAJsonRpcBody()
+    {
+        var form = new MultipartFormDataContent { { new ByteArrayContent(new byte[31_000_000]), "file", "kit.zip" } };
+        var req = new HttpRequestMessage(HttpMethod.Post, "/mcp/upload") { Content = form };
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Key);
+        var resp = await _http.SendAsync(req);
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Contains("\"size\":31000000", await resp.Content.ReadAsStringAsync());
+    }
+
     [Fact]
     public async Task WithoutTheKeyIt401s()
     {

@@ -22,6 +22,9 @@ public static class ServeCommand
         "or the key in the URL path as for MCP). The answer's \"file\" value, upload:<id>, goes into the tool's " +
         "file argument; uploads live 24 hours. An https:// link to the file works too.";
 
+    /** An upload's request: the file and the multipart framing around it. */
+    private const long UploadBodyLimit = UploadStore.MaxBytes + 1024 * 1024;
+
     public static async Task<int> Run(string[] args)
     {
         var key = Environment.GetEnvironmentVariable("DMC_MCP_KEY")?.Trim();
@@ -40,8 +43,9 @@ public static class ServeCommand
         var builder = WebApplication.CreateBuilder(args);
         // The key may travel in the path: keep ASP.NET from logging request lines.
         builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
-        builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = UploadStore.MaxBytes + 1024 * 1024);
-        builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = UploadStore.MaxBytes + 1024 * 1024);
+        // Kestrel's default body limit (30 MB) stays for /mcp — the SDK reads a JSON-RPC body whole into memory —
+        // and only the upload endpoint raises it for its own request.
+        builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = UploadBodyLimit);
 
         var uploads = new UploadStore(Path.Combine(dataDir, "uploads"));
         builder.Services.AddSingleton(uploads);
@@ -72,6 +76,8 @@ public static class ServeCommand
         app.UseRouting();
         app.MapPost("/mcp/upload", async (HttpRequest req, UploadStore store, CancellationToken ct) =>
         {
+            if (req.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
+                limit.MaxRequestBodySize = UploadBodyLimit;
             var noFile = Results.BadRequest(new { error = "send the file as multipart/form-data, field \"file\"" });
             if (!req.HasFormContentType) return noFile;
             IFormCollection form;
