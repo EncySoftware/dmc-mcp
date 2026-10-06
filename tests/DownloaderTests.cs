@@ -123,7 +123,7 @@ public class DownloaderTests : IDisposable
         var handler = new Stub(() =>
         {
             var r = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(new byte[] { 1 }) };
-            r.Content.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment") { FileName = new string('я', 300) + ".sppx" };
+            r.Content.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment") { FileName = new string('ü', 300) + ".sppx" };
             return r;
         });
         var (path, error) = await new Downloader(handler).Fetch("https://files.example.com/d/1", _dir);
