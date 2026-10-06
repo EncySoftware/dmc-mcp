@@ -71,9 +71,10 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         [Description("Description hint: the post's specifics, which machine it is for")] string? descriptionHint = null,
         [Description("true (default) — AI fills in the description, cover and metadata; false — archive parsing only")] bool ai = true,
         [Description("true — upload even if DMC already has one with a similar name")] bool force = false,
-        IProgress<ProgressNotificationValue>? progress = null)
+        IProgress<ProgressNotificationValue>? progress = null,
+        CancellationToken cancellationToken = default)
     {
-        using var input = await _inputs.File(file);
+        using var input = await _inputs.File(file, cancellationToken);
         if (input.Error != null) return input.Error;
         var path = input.Path!;
         if (!PostExtensions.Contains(Path.GetExtension(path).ToLowerInvariant()))
@@ -253,9 +254,10 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         "without re-moderation.")]
     public async Task<string> ReplacePostFile(
         [Description("Post id")] string id,
-        [Description("The new file (.sppx, .dll, .stnci or .zip): a local path, or on the hosted server upload:<id> or an https:// link")] string file)
+        [Description("The new file (.sppx, .dll, .stnci or .zip): a local path, or on the hosted server upload:<id> or an https:// link")] string file,
+        CancellationToken cancellationToken = default)
     {
-        using var input = await _inputs.File(file);
+        using var input = await _inputs.File(file, cancellationToken);
         if (input.Error != null) return input.Error;
         var path = input.Path!;
         if (!PostExtensions.Contains(Path.GetExtension(path).ToLowerInvariant()))
@@ -315,9 +317,10 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         [Description("AI hint for descriptions")] string? descriptionHint = null,
         [Description("true — only show the plan (components, manifest, similar ones in DMC) and send nothing")] bool dryRun = false,
         [Description("true — upload even if DMC already has ones with similar names")] bool force = false,
-        IProgress<ProgressNotificationValue>? progress = null)
+        IProgress<ProgressNotificationValue>? progress = null,
+        CancellationToken cancellationToken = default)
     {
-        using var dirInput = await _inputs.Folder(dir);
+        using var dirInput = await _inputs.Folder(dir, cancellationToken);
         if (dirInput.Error != null) return dirInput.Error;
         var dirPath = dirInput.Path!;
         var files = Directory.GetFiles(dirPath)
@@ -333,7 +336,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         var notes = new List<string>();
         if (manifest != null)
         {
-            using var manifestInput = await ManifestInput(manifest, dirPath);
+            using var manifestInput = await ManifestInput(manifest, dirPath, cancellationToken);
             if (manifestInput.Error is { } manifestErr) // say which file the error is about: the folder may be fine
                 return "ERROR: manifest — " + (manifestErr.StartsWith("ERROR: ") ? manifestErr["ERROR: ".Length..] : manifestErr);
             var mp = manifestInput.Path!;
@@ -419,12 +422,12 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
     }
 
     /** A manifest named relative to the folder (no path escape), else a path / upload id / link like any file. */
-    private async Task<FileInputs.Input> ManifestInput(string manifest, string dirPath)
+    private async Task<FileInputs.Input> ManifestInput(string manifest, string dirPath, CancellationToken ct)
     {
         var inFolder = Path.GetFullPath(Path.Combine(dirPath, manifest));
         if (inFolder.StartsWith(Path.GetFullPath(dirPath) + Path.DirectorySeparatorChar, StringComparison.Ordinal) && File.Exists(inFolder))
             return await FileInputs.Local.File(inFolder);
-        return await _inputs.File(manifest);
+        return await _inputs.File(manifest, ct);
     }
 
     /** In short, what the manifest sets for a row: name=…, controllerManufacturer=…. */
@@ -865,9 +868,10 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         "equipment, picture, posts, controls mentioned. From these facts you can write the description yourself " +
         "and fill in the fields with update_post — when the server AI is not wanted (publish_post with ai=false).")]
     public async Task<string> InspectArchive(
-        [Description("The archive (.zip / .sppx / .dll / .stnci): a local path, or on the hosted server upload:<id> or an https:// link")] string file)
+        [Description("The archive (.zip / .sppx / .dll / .stnci): a local path, or on the hosted server upload:<id> or an https:// link")] string file,
+        CancellationToken cancellationToken = default)
     {
-        using var input = await _inputs.File(file);
+        using var input = await _inputs.File(file, cancellationToken);
         return input.Error ?? ArchiveInspector.Inspect(input.Path!);
     }
 
@@ -878,9 +882,10 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         "on the card. The server AI is not involved.")]
     public async Task<string> SetCover(
         [Description("Component id")] string id,
-        [Description("The picture (.png, .jpg or .webp): a local path, or on the hosted server upload:<id> or an https:// link")] string file)
+        [Description("The picture (.png, .jpg or .webp): a local path, or on the hosted server upload:<id> or an https:// link")] string file,
+        CancellationToken cancellationToken = default)
     {
-        using var input = await _inputs.File(file);
+        using var input = await _inputs.File(file, cancellationToken);
         if (input.Error != null) return input.Error;
         var path = input.Path!;
         if (!ImageExtensions.Contains(Path.GetExtension(path).ToLowerInvariant()))

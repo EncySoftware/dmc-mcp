@@ -44,19 +44,37 @@ public static class AddressGuard
 /// <summary>A file name that cannot climb out of the folder it is saved in.</summary>
 public static class FileNames
 {
+    /** Linux allows 255 bytes for a name; this leaves room and is far beyond any component's real name. */
+    public const int MaxBytes = 200;
+
     public static string Safe(string? raw)
     {
         var name = (raw ?? "").Trim().Trim('"').Replace('\\', '/');
         name = name[(name.LastIndexOf('/') + 1)..];
         foreach (var c in Path.GetInvalidFileNameChars().Concat(new[] { ':', '*', '?', '<', '>', '|' }))
             name = name.Replace(c, '_');
-        return string.IsNullOrWhiteSpace(name) || name is "." or ".." ? "download" : name;
+        return string.IsNullOrWhiteSpace(name) || name is "." or ".." ? "download" : Shortened(name);
+    }
+
+    /** At most MaxBytes of UTF-8, the extension kept: the type check after the download reads it. */
+    private static string Shortened(string name)
+    {
+        if (System.Text.Encoding.UTF8.GetByteCount(name) <= MaxBytes) return name;
+        var ext = Path.GetExtension(name);
+        if (ext.Length > 16) ext = "";
+        var stem = name[..^ext.Length];
+        while (stem.Length > 0 && System.Text.Encoding.UTF8.GetByteCount(stem + ext) > MaxBytes)
+        {
+            stem = stem[..^1];
+            if (stem.Length > 0 && char.IsHighSurrogate(stem[^1])) stem = stem[..^1];
+        }
+        return stem.Length == 0 ? "download" + ext : stem + ext;
     }
 }
 
 /// <summary>
-/// Fetches a file the hosted server's caller points at by an https link: at most 5 redirects, 1 GB and 10 minutes,
-/// and every connection — redirects included — goes only to a public address, checked when the socket opens, so
+/// Fetches a file the hosted server's caller points at by an https link: at most 5 redirects, 1 GB and 10 minutes
+/// for the whole download, body included, and every connection — redirects included — goes only to a public address, checked when the socket opens, so
 /// neither a redirect nor a DNS answer can steer it into the server's own network.
 /// </summary>
 public sealed class Downloader
@@ -66,10 +84,14 @@ public sealed class Downloader
 
     internal long MaxBytes { get; init; } = OneGigabyte;
 
+    /** The whole download, headers and body: HttpClient.Timeout alone stops at the headers. */
+    internal TimeSpan Limit { get; init; } = TimeSpan.FromMinutes(10);
+
     public Downloader() : this(GuardedHandler()) { }
 
+    // No HttpClient.Timeout: with ResponseHeadersRead it would stop at the headers. Limit covers the body too.
     internal Downloader(HttpMessageHandler handler) =>
-        _http = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(10) };
+        _http = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
 
     private static SocketsHttpHandler GuardedHandler() => new()
     {
@@ -101,10 +123,12 @@ public sealed class Downloader
     {
         if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
             return (null, "ERROR: only https:// links can be downloaded.");
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        limit.CancelAfter(Limit);
         string? path = null;
         try
         {
-            using var resp = await _http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
+            using var resp = await _http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, limit.Token);
             if (!resp.IsSuccessStatusCode)
                 return (null, $"ERROR: {uri.Host} answered {(int)resp.StatusCode} for the link.");
             if (resp.Content.Headers.ContentLength > MaxBytes)
@@ -113,16 +137,16 @@ public sealed class Downloader
             Directory.CreateDirectory(intoDir);
             path = Path.Combine(intoDir, name);
             long total = 0;
-            await using (var src = await resp.Content.ReadAsStreamAsync(ct))
+            await using (var src = await resp.Content.ReadAsStreamAsync(limit.Token))
             await using (var dst = File.Create(path))
             {
                 var buf = new byte[81920];
                 int n;
-                while ((n = await src.ReadAsync(buf, ct)) > 0)
+                while ((n = await src.ReadAsync(buf, limit.Token)) > 0)
                 {
                     total += n;
                     if (total > MaxBytes) break;
-                    await dst.WriteAsync(buf.AsMemory(0, n), ct);
+                    await dst.WriteAsync(buf.AsMemory(0, n), limit.Token);
                 }
             }
             if (total > MaxBytes)
@@ -132,17 +156,21 @@ public sealed class Downloader
             }
             return (path, null);
         }
-        catch (HttpRequestException e)
+        catch (Exception e)
         {
+            // A cut connection is an HttpIOException (an IOException, not an HttpRequestException), a name the disk
+            // refuses another IOException: whatever it was, the half-written file goes.
             if (path != null) try { File.Delete(path); } catch { }
-            return (null, "ERROR: could not download the link — " + (e.InnerException?.Message ?? e.Message));
-        }
-        catch (TaskCanceledException)
-        {
-            if (path != null) try { File.Delete(path); } catch { }
-            return (null, "ERROR: the download took longer than 10 minutes.");
+            if (e is OperationCanceledException && ct.IsCancellationRequested) throw; // the caller gave up
+            if (e is OperationCanceledException)
+                return (null, $"ERROR: the download took longer than {Took(Limit)}.");
+            return (null, "ERROR: could not download the link — "
+                          + (e is HttpRequestException ? e.InnerException?.Message ?? e.Message : e.Message));
         }
     }
+
+    private static string Took(TimeSpan t) =>
+        t.TotalMinutes >= 1 ? $"{t.TotalMinutes:0.#} minutes" : $"{t.TotalSeconds:0.#} seconds";
 
     internal static string FileNameFrom(Uri uri, ContentDispositionHeaderValue? cd)
     {

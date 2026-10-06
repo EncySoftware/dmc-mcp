@@ -82,6 +82,41 @@ public class HostedToolsTests : IDisposable
         Assert.Contains(SignInKeepAlive.HostedLoginCommand, answer);
     }
 
+    /** The client gave up (cancelled, or its connection went): the download behind the call stops with it. */
+    [Fact(Timeout = 15000)]
+    public async Task ACancelledCallStopsItsDownload()
+    {
+        var tmp = Path.Combine(_dir, "tmp");
+        var tools = new DmcTools(new FakeDmcClient(), new FakeTokens("tok"),
+            new FileInputs(true, Uploads(), new Downloader(new Silent()), tmp));
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => tools.PublishPost("https://files.example.com/post.sppx", force: true, cancellationToken: cts.Token));
+        Assert.Empty(Directory.GetFileSystemEntries(tmp));
+    }
+
+    [Fact(Timeout = 15000)]
+    public async Task ACancelledFolderCallStopsItsDownload()
+    {
+        var tmp = Path.Combine(_dir, "tmp");
+        var tools = new DmcTools(new FakeDmcClient(), new FakeTokens("tok"),
+            new FileInputs(true, Uploads(), new Downloader(new Silent()), tmp));
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => tools.PublishFolder("https://files.example.com/posts.zip", dryRun: true, cancellationToken: cts.Token));
+        Assert.Empty(Directory.GetFileSystemEntries(tmp));
+    }
+
+    /** A server that accepts the connection and never answers. */
+    private sealed class Silent : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            throw new InvalidOperationException("unreachable");
+        }
+    }
+
     private sealed class ExpiredTokens : DmcTokenProvider
     {
         public override Task<string?> GetAccessToken() => Task.FromException<string?>(

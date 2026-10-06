@@ -93,6 +93,89 @@ public class DownloaderTests : IDisposable
         Assert.Contains("404", error);
     }
 
+    /** HttpClient.Timeout stops at the headers; a server that then sends nothing must not hold the call forever. */
+    [Fact(Timeout = 15000)]
+    public async Task ABodyThatStallsRunsIntoTheLimit()
+    {
+        var handler = new Stub(() => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new Stalling()) });
+        var (path, error) = await new Downloader(handler) { Limit = TimeSpan.FromMilliseconds(300) }
+            .Fetch("https://files.example.com/post.sppx", _dir);
+        Assert.Null(path);
+        Assert.Contains("took longer", error);
+        Assert.Empty(Directory.Exists(_dir) ? Directory.GetFiles(_dir, "*", SearchOption.AllDirectories) : Array.Empty<string>());
+    }
+
+    /** A connection cut mid-body is an HttpIOException — an IOException, not an HttpRequestException. */
+    [Fact]
+    public async Task ABodyCutShortIsAnErrorAndNothingIsLeft()
+    {
+        var handler = new Stub(() => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new Breaking()) });
+        var (path, error) = await new Downloader(handler).Fetch("https://files.example.com/post.sppx", _dir);
+        Assert.Null(path);
+        Assert.StartsWith("ERROR: could not download", error);
+        Assert.Empty(Directory.Exists(_dir) ? Directory.GetFiles(_dir, "*", SearchOption.AllDirectories) : Array.Empty<string>());
+    }
+
+    /** Linux takes 255 bytes for a name; a longer one from Content-Disposition is shortened, its extension kept. */
+    [Fact]
+    public async Task ALongNameIsShortenedNotFatal()
+    {
+        var handler = new Stub(() =>
+        {
+            var r = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(new byte[] { 1 }) };
+            r.Content.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment") { FileName = new string('я', 300) + ".sppx" };
+            return r;
+        });
+        var (path, error) = await new Downloader(handler).Fetch("https://files.example.com/d/1", _dir);
+        Assert.Null(error);
+        var name = Path.GetFileName(path!);
+        Assert.EndsWith(".sppx", name);
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(name) <= FileNames.MaxBytes);
+    }
+
+    private sealed class Stalling : Stream
+    {
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            return 0;
+        }
+        public override Task<int> ReadAsync(byte[] b, int o, int c, CancellationToken ct) => ReadAsync(b.AsMemory(o, c), ct).AsTask();
+        public override int Read(byte[] b, int o, int c) => throw new NotSupportedException();
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => 0; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override long Seek(long o, SeekOrigin s) => throw new NotSupportedException();
+        public override void SetLength(long v) => throw new NotSupportedException();
+        public override void Write(byte[] b, int o, int c) => throw new NotSupportedException();
+    }
+
+    private sealed class Breaking : Stream
+    {
+        private bool _sent;
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            if (_sent) throw new IOException("The response ended prematurely.");
+            _sent = true;
+            buffer.Span[..10].Fill(7);
+            return ValueTask.FromResult(10);
+        }
+        public override Task<int> ReadAsync(byte[] b, int o, int c, CancellationToken ct) => ReadAsync(b.AsMemory(o, c), ct).AsTask();
+        public override int Read(byte[] b, int o, int c) => throw new NotSupportedException();
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => 0; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override long Seek(long o, SeekOrigin s) => throw new NotSupportedException();
+        public override void SetLength(long v) => throw new NotSupportedException();
+        public override void Write(byte[] b, int o, int c) => throw new NotSupportedException();
+    }
+
     [Theory]
     [InlineData("https://h/a/b/post.sppx", null, "post.sppx")]
     [InlineData("https://h/a/Fanuc%200i.sppx", null, "Fanuc 0i.sppx")]

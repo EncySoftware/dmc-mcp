@@ -41,6 +41,37 @@ public class ServeTests : IAsyncLifetime
         return req;
     }
 
+    private static HttpRequestMessage Rpc(string path, string body, string? session)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Post, path) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+        req.Headers.Accept.ParseAdd("application/json");
+        req.Headers.Accept.ParseAdd("text/event-stream");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Key);
+        if (session != null) req.Headers.Add("Mcp-Session-Id", session);
+        return req;
+    }
+
+    /** initialize, then one more request in the same session (if the server keeps sessions). */
+    private async Task<HttpResponseMessage> AfterInitialize(string body)
+    {
+        var init = await _http.SendAsync(Initialize("/mcp", Key));
+        init.EnsureSuccessStatusCode();
+        var session = init.Headers.TryGetValues("Mcp-Session-Id", out var v) ? v.First() : null;
+        await _http.SendAsync(Rpc("/mcp", """{"jsonrpc":"2.0","method":"notifications/initialized"}""", session));
+        return await _http.SendAsync(Rpc("/mcp", body, session));
+    }
+
+    /** The request's CancellationToken is bound by the SDK — an agent never sees it as a tool argument. */
+    [Fact]
+    public async Task ToolSchemasDoNotShowTheCancellationToken()
+    {
+        var resp = await AfterInitialize("""{"jsonrpc":"2.0","id":2,"method":"tools/list"}""");
+        var body = await resp.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Contains("publish_post", body);
+        Assert.DoesNotContain("cancellationToken", body, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task WithoutTheKeyIt401s()
     {
