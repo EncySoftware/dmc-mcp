@@ -8,7 +8,8 @@ RUN test -n "$VERSION" \
  && mkdir /x && unzip -q /p.nupkg 'tools/net8.0/any/*' -d /x \
  && mv /x/tools/net8.0/any /app
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0
+# The tool is built for net8.0 and rolls forward (RollForward=Major): it runs on a runtime that is still supported.
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
 COPY --from=package /app /app
 # XDG_CONFIG_HOME puts the sign-in (auth.json) on the volume; uploads go there too.
 ENV XDG_CONFIG_HOME=/data DMC_MCP_DATA=/data ASPNETCORE_HTTP_PORTS=8080 DOTNET_CLI_TELEMETRY_OPTOUT=1

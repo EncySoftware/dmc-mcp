@@ -72,7 +72,8 @@ The server's MCP `instructions` describe the upload route, so an agent learns it
 ## Where it runs
 
 - Docker image from the repository's `Dockerfile`: the dotnet tool exactly as published on nuget.org, unpacked
-  onto the `aspnet:8.0` runtime (user `app`). Nothing is compiled on the server — the VPS has two cores and
+  onto the `aspnet:10.0` runtime (user `app`; the tool is built for net8.0 and rolls forward, .NET 8 support
+  ending 10 November 2026). Nothing is compiled on the server — the VPS has two cores and
   3.8 GB, most of it the backend's:
   `docker build --build-arg VERSION=0.8.0 -t dmc-mcp:0.8.0 https://github.com/EncySoftware/dmc-mcp.git#v0.8.0`.
 - Container `dmc-mcp`, `--restart unless-stopped`, `--memory 1g` and `--pids-limit 256` (if it runs away,

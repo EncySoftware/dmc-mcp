@@ -63,7 +63,7 @@ dropped one.
 
 ## Install (Cursor, Claude Code, Codex)
 
-Requires the .NET 8 SDK.
+Requires the .NET 8 SDK or newer (the tool rolls forward to a newer runtime when 8 is not installed).
 
 ```bash
 dotnet tool install -g EncySoftware.DmcMcp
