@@ -69,8 +69,8 @@ public static class SetupCommand
         var version = await proc.Run("claude", "--version");
         if (version.Ok)
         {
-            // --scope user: без него Claude Code запоминает сервер только для папки, где шёл setup, и
-            // из любой другой папки инструмента нет (проверено 2026-09-16 — `claude mcp list` пуст).
+            // --scope user: without it Claude Code remembers the server only for the folder setup ran in, and
+            // from any other folder the tool is missing (checked 2026-09-16 — `claude mcp list` is empty).
             var add = await proc.Run("claude", $"mcp add --scope user {ServerName} -- {Command}");
             write(add.Ok
                 ? $"Claude Code: {ServerName} registered"

@@ -3,9 +3,9 @@ using DmcMcp;
 using Xunit;
 
 /**
- * Факты об архиве для агента — локально, без сервера и без ИИ: что внутри, как называется станок,
- * какие оси, какая оснастка, есть ли картинка, какие стойки упоминаются. По ним агент пишет
- * описание сам и заполняет поля, если автор не хочет серверного ИИ.
+ * Facts about an archive for the agent — locally, with no server and no AI: what is inside, what the machine
+ * is called, which axes, what equipment, whether there is a picture, which controls are mentioned. From them
+ * the agent writes the description itself and fills in the fields if the author wants no server AI.
  */
 public class InspectArchiveTests : IDisposable
 {
@@ -63,10 +63,10 @@ public class InspectArchiveTests : IDisposable
         Assert.Contains("Images/preview.png", res);
         Assert.Contains("post.sppx", res);
         Assert.Contains("Fanuc", res);
-        Assert.Contains("762", res); // ход по X попал в отчёт
+        Assert.Contains("762", res); // the X travel made it into the report
     }
 
-    /** Не zip — всё равно полезно: размер и какие стойки упоминаются в тексте. */
+    /** Not a zip — still useful: the size and which controls are mentioned in the text. */
     [Fact]
     public void ScansAPlainFileForKeywords()
     {
@@ -75,7 +75,7 @@ public class InspectArchiveTests : IDisposable
 
         var res = ArchiveInspector.Inspect(sppx);
 
-        Assert.Contains("не zip", res);
+        Assert.Contains("not a zip", res);
         Assert.Contains("Siemens", res);
         Assert.Contains("DMG", res);
         Assert.DoesNotContain("Fanuc", res);
@@ -84,14 +84,14 @@ public class InspectArchiveTests : IDisposable
     [Fact]
     public void MissingFileIsAnError()
     {
-        Assert.StartsWith("ОШИБКА", ArchiveInspector.Inspect(Path.Combine(_dir, "nope.zip")));
+        Assert.StartsWith("ERROR", ArchiveInspector.Inspect(Path.Combine(_dir, "nope.zip")));
     }
 
     [Fact]
     public async Task ToolWrapsTheInspector()
     {
         var zip = ZipWith(("machine.xml", SchemaXml));
-        var tools = new DmcTools(new FakeDmcClient(), new FakeTokens(null)); // входа не нужно
+        var tools = new DmcTools(new FakeDmcClient(), new FakeTokens(null)); // no sign-in needed
         Assert.Contains("Haas VF-2", await tools.InspectArchive(zip));
     }
 }

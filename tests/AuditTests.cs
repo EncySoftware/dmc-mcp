@@ -2,8 +2,8 @@ using DmcMcp;
 using Xunit;
 
 /**
- * После пачки: каким черновикам чего не хватает по правилам модерации (имя, производитель станка,
- * тип станка, архив), и отправить готовые одним вызовом.
+ * After a batch: what each draft lacks under the moderation rules (name, machine maker,
+ * machine type, archive), and submitting the ready ones in one call.
  */
 public class AuditTests
 {
@@ -26,14 +26,14 @@ public class AuditTests
         var res = await Tools(WithDrafts()).AuditDrafts();
 
         Assert.Contains("Fanuc 0i", res);
-        Assert.Contains("готов", res);
-        Assert.Contains("без обложки", res);
+        Assert.Contains("ready to submit", res);
+        Assert.Contains("no cover", res);
         Assert.Contains("d2", res);
-        Assert.Contains("производитель станка", res);
-        Assert.Contains("тип станка", res);
-        Assert.Contains("архив", res);
-        Assert.DoesNotContain("Old one", res); // опубликованное — не черновик
-        Assert.Contains("Готовы: 1", res);
+        Assert.Contains("machine maker", res);
+        Assert.Contains("machine type", res);
+        Assert.Contains("archive", res);
+        Assert.DoesNotContain("Old one", res); // a published one is not a draft
+        Assert.Contains("Ready: 1", res);
     }
 
     [Fact]
@@ -44,9 +44,9 @@ public class AuditTests
 
         Assert.Equal(("d1", "PENDING_REVIEW"), Assert.Single(dmc.StatusCalls));
         Assert.Contains("Fanuc 0i", res);
-        Assert.Contains("на модерацию", res);
+        Assert.Contains("submitted for moderation", res);
         Assert.Contains("d2", res);
-        Assert.Contains("не хватает", res);
+        Assert.Contains("missing:", res);
     }
 
     [Fact]
@@ -62,8 +62,8 @@ public class AuditTests
     public async Task NothingToSubmitSaysSo()
     {
         var dmc = new FakeDmcClient();
-        Assert.Contains("нет черновиков", await Tools(dmc).SubmitDrafts("ALL"));
-        Assert.StartsWith("ОШИБКА", await Tools(dmc).SubmitDrafts(" , "));
+        Assert.Contains("no drafts", await Tools(dmc).SubmitDrafts("ALL"));
+        Assert.StartsWith("ERROR", await Tools(dmc).SubmitDrafts(" , "));
     }
 
     [Fact]

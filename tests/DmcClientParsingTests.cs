@@ -23,7 +23,7 @@ public class DmcClientParsingTests
         Assert.Equal("https://dmc.test/product/fanuc-0i", p.Url("https://dmc.test"));
     }
 
-    /** Без slug ссылка ведёт по id; slug с пробелом экранируется — как productUrl() у веб-клиента. */
+    /** Without a slug the link goes by id; a slug with a space is escaped — like productUrl() in the web client. */
     [Fact]
     public void UrlFallsBackToIdAndEscapes()
     {
@@ -47,7 +47,7 @@ public class DmcClientParsingTests
         Assert.False(DmcJson.Progress(J("""{"status":"queued"}""")).Finished);
     }
 
-    /** Поле, которого инструмент не знает (новое на бэкенде), едет в PUT обратно, а не обнуляется. */
+    /** A field the tool does not know (new on the backend) goes back in the PUT instead of being nulled. */
     [Fact]
     public void RequestFromRoundTripsUnknownFields()
     {
@@ -57,7 +57,7 @@ public class DmcClientParsingTests
         Assert.False(req.ContainsKey("id"));
     }
 
-    /** Для полного PUT берутся только поля запроса: id, slug и счётчики карточки бэкенд не примет. */
+    /** A full PUT takes only request fields: the backend would not accept the card's id, slug and counters. */
     [Fact]
     public void RequestFromKeepsOnlyRequestFields()
     {

@@ -2,8 +2,8 @@ using DmcMcp;
 using Xunit;
 
 /**
- * Импорт, который не дождались: publish_post отдаёт importId через 10 минут ожидания, и до этого
- * инструмента доложить его результат было нечем — сервер-то продолжает.
+ * An import nobody waited out: publish_post hands back the importId after 10 minutes of waiting, and before
+ * this tool there was nothing to report its result with — even though the server carries on.
  */
 public class CheckImportTests
 {
@@ -19,9 +19,9 @@ public class CheckImportTests
 
         var res = await Tools(dmc).CheckImport("imp1");
 
-        Assert.Contains("Создан черновик: Fanuc 0i", res);
+        Assert.Contains("Draft created: Fanuc 0i", res);
         Assert.Contains("https://dmc.test/product/fanuc-0i", res);
-        Assert.Empty(dmc.Starts); // ничего не отправляет заново
+        Assert.Empty(dmc.Starts); // re-sends nothing
     }
 
     [Fact]
@@ -34,7 +34,7 @@ public class CheckImportTests
 
         var res = await tools.CheckImport("imp1");
 
-        Assert.Contains("всё ещё идёт", res);
+        Assert.Contains("still running", res);
         Assert.Contains("imp1", res);
     }
 
@@ -43,8 +43,8 @@ public class CheckImportTests
     {
         var dmc = new FakeDmcClient { FailProgress = new DmcHttpException(404, "") };
         var res = await Tools(dmc).CheckImport("old");
-        Assert.StartsWith("ОШИБКА", res);
-        Assert.Contains("не найден", res);
+        Assert.StartsWith("ERROR", res);
+        Assert.Contains("not found", res);
     }
 
     [Fact]

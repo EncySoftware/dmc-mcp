@@ -2,14 +2,14 @@ using System.Text;
 
 namespace DmcMcp;
 
-/** Строка manifest: имя (если задано) и поля карточки для одного файла. */
+/** A manifest row: the name (if given) and the card fields for one file. */
 internal sealed record ManifestEntry(string? Name, DmcTools.FieldSet Fields);
 
 /**
- * CSV автора рядом с постами — точные данные вместо догадок ИИ:
- * <c>file,name,controllerManufacturer,…</c>. Обязательна только колонка <c>file</c>.
- * Неизвестная колонка — ошибка, а не молчание: опечатка в заголовке иначе тихо выбросила бы
- * целый столбец, и автор узнал бы об этом по карточкам.
+ * The author's CSV next to the posts — exact data instead of AI guesses:
+ * <c>file,name,controllerManufacturer,…</c>. Only the <c>file</c> column is required.
+ * An unknown column is an error, not silence: otherwise a typo in the header would quietly drop
+ * a whole column, and the author would find out from the cards.
  */
 internal sealed class Manifest
 {
@@ -24,20 +24,20 @@ internal sealed class Manifest
 
     public IReadOnlyCollection<string> Files => _byFile.Keys;
 
-    /** Запись для файла — по имени без пути, регистр не важен. */
+    /** The entry for a file — by its name without the path, case-insensitive. */
     public ManifestEntry? For(string fileName) => _byFile.GetValueOrDefault(Path.GetFileName(fileName));
 
     public static Manifest Parse(string path)
     {
         var lines = File.ReadAllLines(path, Encoding.UTF8).Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
-        if (lines.Count == 0) throw new InvalidDataException("manifest пуст");
+        if (lines.Count == 0) throw new InvalidDataException("manifest is empty");
 
         var header = SplitCsv(lines[0]).Select(h => h.Trim().TrimStart('﻿')).ToList();
         foreach (var h in header)
             if (!Columns.Contains(h, StringComparer.OrdinalIgnoreCase))
-                throw new InvalidDataException($"неизвестная колонка «{h}»; допустимы: {string.Join(", ", Columns)}");
+                throw new InvalidDataException($"unknown column \"{h}\"; allowed: {string.Join(", ", Columns)}");
         if (!header.Contains("file", StringComparer.OrdinalIgnoreCase))
-            throw new InvalidDataException("нет колонки file");
+            throw new InvalidDataException("no file column");
 
         var m = new Manifest();
         for (int i = 1; i < lines.Count; i++)
@@ -51,23 +51,23 @@ internal sealed class Manifest
                 return v.Length == 0 ? null : v;
             }
 
-            var file = Cell("file") ?? throw new InvalidDataException($"строка {i + 1}: пустое поле file");
+            var file = Cell("file") ?? throw new InvalidDataException($"line {i + 1}: the file field is empty");
             int? axes = null;
             var axesText = Cell("numberOfAxes");
             if (axesText != null)
             {
                 if (!int.TryParse(axesText, out var n))
-                    throw new InvalidDataException($"строка {i + 1}: numberOfAxes «{axesText}» — не число");
+                    throw new InvalidDataException($"line {i + 1}: numberOfAxes \"{axesText}\" is not a number");
                 axes = n;
             }
-            // Ход по осям — мм, с точкой: запятая в CSV делит колонки.
+            // Axis travels are in mm, with a decimal point: in CSV the comma separates columns.
             double? Travel(string col)
             {
                 var text = Cell(col);
                 if (text == null) return null;
                 if (!double.TryParse(text, System.Globalization.NumberStyles.Float,
                         System.Globalization.CultureInfo.InvariantCulture, out var mm))
-                    throw new InvalidDataException($"строка {i + 1}: {col} «{text}» — не число (мм, дробная часть через точку)");
+                    throw new InvalidDataException($"line {i + 1}: {col} \"{text}\" is not a number (mm, with a decimal point)");
                 return mm;
             }
             m._byFile[Path.GetFileName(file)] = new ManifestEntry(Cell("name"), new DmcTools.FieldSet(
@@ -79,7 +79,7 @@ internal sealed class Manifest
         return m;
     }
 
-    /** RFC 4180 в объёме, которого хватает: запятые, кавычки, удвоенные кавычки внутри. */
+    /** As much of RFC 4180 as is needed: commas, quotes, doubled quotes inside. */
     internal static List<string> SplitCsv(string line)
     {
         var cells = new List<string>();

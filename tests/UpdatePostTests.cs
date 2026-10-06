@@ -14,7 +14,7 @@ public class UpdatePostTests
         return dmc;
     }
 
-    /** PUT у DMC полный: нетронутые поля (архив!) едут как были, лишние поля карточки — нет. */
+    /** DMC's PUT is a full one: untouched fields (the archive!) go as they were, the card's extra fields do not. */
     [Fact]
     public async Task PutsTheWholeRowWithOnlyTheGivenFieldsChanged()
     {
@@ -38,7 +38,7 @@ public class UpdatePostTests
     {
         var dmc = WithPost();
         var res = await Tools(dmc).UpdatePost("p1", machineType: "FRAISEUSE");
-        Assert.StartsWith("ОШИБКА", res);
+        Assert.StartsWith("ERROR", res);
         Assert.Contains("MILLING", res);
         Assert.Empty(dmc.Puts);
     }
@@ -56,7 +56,7 @@ public class UpdatePostTests
     {
         var dmc = WithPost();
         var res = await Tools(dmc).UpdatePost("p1", name: "Fanuc 0i");
-        Assert.Contains("Менять нечего", res);
+        Assert.Contains("Nothing to change", res);
         Assert.Empty(dmc.Puts);
     }
 
@@ -64,7 +64,7 @@ public class UpdatePostTests
     public async Task UnknownPostIsAnError()
     {
         var res = await Tools(new FakeDmcClient()).UpdatePost("nope", name: "x");
-        Assert.Contains("не нашёл", res);
+        Assert.Contains("did not find", res);
     }
 
     /** A schema card with the work area the archive gave it: X 508 × Y 406.4 × Z 508. */
@@ -105,7 +105,7 @@ public class UpdatePostTests
     {
         var dmc = WithSchema();
         var res = await Tools(dmc).UpdatePost("s1", travelXMm: 508);
-        Assert.Contains("Менять нечего", res);
+        Assert.Contains("Nothing to change", res);
         Assert.Empty(dmc.Puts);
     }
 
@@ -117,7 +117,7 @@ public class UpdatePostTests
     {
         var dmc = WithSchema();
         var res = await Tools(dmc).UpdatePost("s1", travelZMm: travel);
-        Assert.StartsWith("ОШИБКА", res);
+        Assert.StartsWith("ERROR", res);
         Assert.Empty(dmc.Puts);
     }
 }

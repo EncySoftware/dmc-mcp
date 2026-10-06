@@ -19,18 +19,18 @@ public class SubmitPostTests
         var dmc = WithPost();
         var res = await Tools(dmc).SubmitPost("p1");
         Assert.Equal(("p1", "PENDING_REVIEW"), Assert.Single(dmc.StatusCalls));
-        Assert.Contains("на модерацию", res);
+        Assert.Contains("submitted for moderation", res);
         Assert.Contains("https://dmc.test/product/fanuc-0i", res);
     }
 
-    /** Бэкенд перечисляет недостающее — автор видит список и что делать, а не «400». */
+    /** The backend lists what is missing — the author sees the list and what to do, not "400". */
     [Fact]
     public async Task MissingFieldsAreListedWithTheFix()
     {
         var dmc = WithPost();
         dmc.FailStatus = new DmcHttpException(400, """{"error":"Missing required fields: Machine Type, Product File"}""");
         var res = await Tools(dmc).SubmitPost("p1");
-        Assert.StartsWith("ОШИБКА", res);
+        Assert.StartsWith("ERROR", res);
         Assert.Contains("Machine Type, Product File", res);
         Assert.Contains("update_post", res);
     }
@@ -40,7 +40,7 @@ public class SubmitPostTests
     {
         var dmc = WithPost("PENDING_REVIEW");
         var res = await Tools(dmc).SubmitPost("p1");
-        Assert.Contains("уже на модерации", res);
+        Assert.Contains("already pending moderation", res);
         Assert.Empty(dmc.StatusCalls);
     }
 

@@ -17,11 +17,11 @@ public class DmcTokenProvider
         ?? $"{Brand.KeycloakUrl}realms/{Brand.KeycloakRealm}/protocol/openid-connect/token";
 
     /**
-     * Клиент Keycloak. Один и тот же для консольного и браузерного входа — и это не упрощение,
-     * а то, что есть: в realm СПРУТКАМа своего клиента `extension-store` нет, а из четырёх
-     * клиентов, встречающихся в сборке DMC, живёт только `dealer-space` (проверено запросами
-     * к realm). Появится свой публичный клиент — достаточно переменной окружения, правки кода
-     * не нужны.
+     * The Keycloak client. The same one for the console and the browser sign-in — and that is not a
+     * simplification but what there is: the SprutCAM realm has no `extension-store` client of its own, and of
+     * the four clients found in the DMC build only `dealer-space` is alive (checked with requests to the
+     * realm). When a public client of our own appears, an environment variable is enough — no code
+     * change needed.
      */
     private readonly string _clientId =
         Environment.GetEnvironmentVariable("DMC_CLIENT_ID") ?? Brand.KeycloakClient;
@@ -74,7 +74,7 @@ public class DmcTokenProvider
     }
 
     /**
-     * Sign in through the СПРУТКАМ sign-in page in a browser — the default, because this tool has no
+     * Sign in through the SprutCAM sign-in page in a browser — the default, because this tool has no
      * business seeing anyone's password, and because two-factor and SSO only work there.
      */
     public async Task<int> LoginBrowser()

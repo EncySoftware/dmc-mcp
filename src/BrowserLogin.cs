@@ -6,14 +6,14 @@ using System.Text.Json;
 namespace DmcMcp;
 
 /**
- * Sign in through the СПРУТКАМ sign-in page in a browser (OAuth authorization code + PKCE, loopback
+ * Sign in through the SprutCAM sign-in page in a browser (OAuth authorization code + PKCE, loopback
  * redirect) instead of typing an email and password into this terminal.
  *
  * <para>Three reasons it is the better door. The tool never sees the password. Whatever the account
  * needs — SSO, two-factor, a password manager — happens in the browser where it works, and a
  * password grant simply breaks the day two-factor is switched on. And it needs no Direct Access
  * Grants on the Keycloak client — which matters here, because the store has no Keycloak client of
- * its own in the СПРУТКАМ realm and this tool borrows `dealer-space`.</para>
+ * its own in the SprutCAM realm and this tool borrows `dealer-space`.</para>
  *
  * <para>What it needs from Keycloak: Standard Flow enabled and <c>http://127.0.0.1:*∕callback</c>
  * among the client's valid redirect URIs. Until that is in place the page refuses with "Invalid

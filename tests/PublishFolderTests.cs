@@ -1,7 +1,7 @@
 using DmcMcp;
 using Xunit;
 
-/** Manifest — CSV автора: точные имя и поля вместо догадок ИИ. Только колонка file обязательна. */
+/** Manifest — the author's CSV: exact name and fields instead of AI guesses. Only the file column is required. */
 public class ManifestTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "dmc-man-" + Guid.NewGuid().ToString("N")[..8]);
@@ -69,8 +69,8 @@ public class ManifestTests : IDisposable
 }
 
 /**
- * Пачка: один zip с папкой на пост — так bulk-zip делит его на отдельные черновики и берёт имя
- * из имени папки. После импорта поля из manifest накатываются PUT-ом на каждый черновик.
+ * A batch: one zip with a folder per post — that is how bulk-zip splits it into separate drafts and takes the
+ * name from the folder name. After the import, the manifest fields are applied to every draft with a PUT.
  */
 public class PublishFolderTests : IDisposable
 {
@@ -111,11 +111,11 @@ public class PublishFolderTests : IDisposable
 
         var s = Assert.Single(dmc.Starts);
         Assert.EndsWith(".zip", s.File);
-        Assert.False(File.Exists(s.File)); // временный zip прибран
+        Assert.False(File.Exists(s.File)); // the temporary zip is cleaned up
         Assert.Equal(new[] { "Fanuc 0i-MF/b.sppx", "a/a.sppx" },
             dmc.ZipEntries.OrderBy(e => e, StringComparer.Ordinal).ToArray());
-        Assert.Contains("Создан черновик: a", res);
-        Assert.Contains("Создан черновик: Fanuc 0i-MF", res);
+        Assert.Contains("Draft created: a", res);
+        Assert.Contains("Draft created: Fanuc 0i-MF", res);
         var put = Assert.Single(dmc.Puts);
         Assert.Equal("p2", put.Id);
         Assert.Equal("Siemens", put.Body["controllerManufacturer"]);
@@ -137,7 +137,7 @@ public class PublishFolderTests : IDisposable
 
         Assert.Equal(new[] { "a/a.sppx", "b/b.sppx" }, dmc.ZipEntries.OrderBy(e => e).ToArray());
         Assert.Empty(dmc.Puts);
-        Assert.Contains("2 черновик", res);
+        Assert.Contains("2 draft", res);
     }
 
     [Fact]
@@ -148,8 +148,8 @@ public class PublishFolderTests : IDisposable
         File.WriteAllText(Path.Combine(empty, "readme.txt"), "x");
         var dmc = new FakeDmcClient();
         var res = await Tools(dmc).PublishFolder(empty);
-        Assert.StartsWith("ОШИБКА", res);
-        Assert.Contains("нет файлов постов", res);
+        Assert.StartsWith("ERROR", res);
+        Assert.Contains("no post files", res);
         Assert.Empty(dmc.Starts);
     }
 
@@ -158,14 +158,14 @@ public class PublishFolderTests : IDisposable
     {
         var dmc = new FakeDmcClient();
         var res = await Tools(dmc).PublishFolder(_dir, Path.Combine(_dir, "nope.csv"));
-        Assert.StartsWith("ОШИБКА", res);
+        Assert.StartsWith("ERROR", res);
         Assert.Contains("manifest", res);
         res = await Tools(dmc).PublishFolder(_dir, Manifest("name\nx\n"));
-        Assert.StartsWith("ОШИБКА", res);
+        Assert.StartsWith("ERROR", res);
         Assert.Empty(dmc.Starts);
     }
 
-    /** Подпапка — тоже компонент: схема (xml + osd) или кит едут папкой, bulk-zip их распознаёт сам. */
+    /** A subfolder is a component too: a schema (xml + osd) or a kit goes as a folder; bulk-zip recognises it. */
     [Fact]
     public async Task SubfoldersBecomeComponentsToo()
     {
@@ -186,11 +186,11 @@ public class PublishFolderTests : IDisposable
 
         Assert.Contains("Haas VF-2/machine.xml", dmc.ZipEntries);
         Assert.Contains("Haas VF-2/Images/m.osd", dmc.ZipEntries);
-        Assert.Contains("Создан черновик: Haas VF-2 (MACHINE_SCHEMA)", res);
-        Assert.Contains("3 черновик", res);
+        Assert.Contains("Draft created: Haas VF-2 (MACHINE_SCHEMA)", res);
+        Assert.Contains("3 draft", res);
     }
 
-    /** Лишняя строка в manifest — предупреждение в отчёте, а не отказ: остальное заливается. */
+    /** An extra manifest row is a warning in the report, not a refusal: the rest still gets uploaded. */
     [Fact]
     public async Task AManifestRowForAMissingFileIsReportedNotFatal()
     {
@@ -205,6 +205,6 @@ public class PublishFolderTests : IDisposable
 
         Assert.Single(dmc.Starts);
         Assert.Contains("c.sppx", res);
-        Assert.Contains("нет в папке", res);
+        Assert.Contains("not in the folder", res);
     }
 }

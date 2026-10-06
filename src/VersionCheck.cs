@@ -3,8 +3,8 @@ using System.Text.Json;
 namespace DmcMcp;
 
 /// <summary>
-/// Подсказка о новой версии: список версий с nuget.org против своей. Любой сбой — молчание: это
-/// справка, а не проверка, и она не должна мешать ни серверу, ни <c>setup</c>.
+/// A hint about a newer version: the version list from nuget.org against our own. Any failure means silence:
+/// this is a courtesy note, not a check, and it must get in the way of neither the server nor <c>setup</c>.
 /// </summary>
 public static class VersionCheck
 {
@@ -12,11 +12,11 @@ public static class VersionCheck
 
     public const string IndexUrl = "https://api.nuget.org/v3-flatcontainer/encysoftware.dmcmcp/index.json";
 
-    /** Версия этой сборки в виде «0.3.1». */
+    /** This build's version, as "0.3.1". */
     public static string Current =>
         typeof(VersionCheck).Assembly.GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{Math.Max(v.Build, 0)}" : "0.0.0";
 
-    /** Новейшая версия из JSON nuget.org, если она новее current; иначе null. */
+    /** The newest version from the nuget.org JSON if it is newer than current; otherwise null. */
     public static string? NewerThan(string current, string versionsJson)
     {
         if (!TryParse(current, out var mine)) return null;
@@ -37,19 +37,19 @@ public static class VersionCheck
         catch (JsonException) { return null; }
     }
 
-    /** Строка для человека или null — без сети, при ошибке и когда версия актуальна. */
+    /** A line for a human, or null — with no network, on an error, and when the version is current. */
     public static async Task<string?> Hint()
     {
         try
         {
             var newer = NewerThan(Current, await Http.GetStringAsync(IndexUrl));
             return newer == null ? null
-                : $"Доступна версия {newer} (у вас {Current}): dotnet tool update -g EncySoftware.DmcMcp";
+                : $"Version {newer} is available (you have {Current}): dotnet tool update -g EncySoftware.DmcMcp";
         }
         catch (Exception) { return null; }
     }
 
-    /** «0.3.1.0» сборки и «0.3.1» пакета — одно и то же; хвост «-beta» отбрасывается. */
+    /** The assembly's "0.3.1.0" and the package's "0.3.1" are the same; a "-beta" tail is dropped. */
     private static bool TryParse(string s, out Version v)
     {
         var core = (s ?? "").Split('-', '+')[0];

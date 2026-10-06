@@ -2,8 +2,8 @@ using DmcMcp;
 using Xunit;
 
 /**
- * Защита от дублей и сухой прогон. В каталоге 165 опубликованных постов делят 70 имён — значит
- * инструмент должен искать похожее ДО загрузки и останавливаться, пока автор не скажет force.
+ * The duplicate guard and the dry run. In the catalogue 165 published posts share 70 names — so the
+ * tool has to look for similar ones BEFORE uploading and stop until the author says force.
  */
 public class DuplicateGuardTests : IDisposable
 {
@@ -43,7 +43,7 @@ public class DuplicateGuardTests : IDisposable
 
         var res = await Tools(dmc).PublishPost(_file, name: "Fanuc 0i");
 
-        Assert.StartsWith("Похожие уже есть", res);
+        Assert.StartsWith("Similar ones already exist", res);
         Assert.Contains("Fanuc 0i for Haas VF-2", res);
         Assert.Contains("force", res);
         Assert.Contains("replace_post_file", res);
@@ -60,10 +60,10 @@ public class DuplicateGuardTests : IDisposable
         var res = await Tools(dmc).PublishPost(_file, name: "Fanuc 0i", force: true);
 
         Assert.Single(dmc.Starts);
-        Assert.Contains("Создан черновик", res);
+        Assert.Contains("Draft created", res);
     }
 
-    /** Без подсказки имени ищем по имени файла — иначе защита молчала бы ровно тогда, когда автор ленится. */
+    /** Without a name hint, search by file name — or the guard stays silent exactly when the author is lazy. */
     [Fact]
     public async Task PublishPostSearchesByTheFileNameWhenThereIsNoHint()
     {
@@ -81,7 +81,7 @@ public class DuplicateGuardTests : IDisposable
 
         var res = await Tools(dmc).PublishFolder(_dir, manifest, dryRun: true);
 
-        Assert.Contains("Сухой прогон", res);
+        Assert.Contains("Dry run", res);
         Assert.Contains("a ← a.sppx", res);
         Assert.Contains("Fanuc 0i-MF ← b.sppx", res);
         Assert.Contains("controllerManufacturer=Siemens", res);
@@ -95,12 +95,12 @@ public class DuplicateGuardTests : IDisposable
         dmc.Published.Add(FakeDmcClient.Post("p9", "a", status: "PUBLISHED"));
 
         var stopped = await Tools(dmc).PublishFolder(_dir);
-        Assert.StartsWith("Похожие уже есть", stopped);
+        Assert.StartsWith("Similar ones already exist", stopped);
         Assert.Empty(dmc.Starts);
 
         var forced = await Tools(dmc).PublishFolder(_dir, force: true);
         Assert.Single(dmc.Starts);
-        Assert.Contains("2 черновик", forced);
+        Assert.Contains("2 draft", forced);
     }
 
     [Fact]

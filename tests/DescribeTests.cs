@@ -2,7 +2,7 @@ using System.Text.Json;
 using DmcMcp;
 using Xunit;
 
-/** Полная карточка: агент должен видеть текст описания, обложку, файлы и связи, а не только сводку. */
+/** The full card: the agent must see the description text, the cover, files and links, not just a summary. */
 public class DescribeTests
 {
     private static DmcTools Tools(FakeDmcClient dmc, string? token = "tok") =>
@@ -32,7 +32,7 @@ public class DescribeTests
         Assert.Contains("products/p1/sample.nc", res);
         Assert.Contains("Haas VF-2", res);
         Assert.Contains("https://dmc.test/product/fanuc-0i", res);
-        Assert.Contains("черновик", res);
+        Assert.Contains("draft", res);
     }
 
     [Fact]
@@ -41,14 +41,14 @@ public class DescribeTests
         var dmc = new FakeDmcClient();
         dmc.Products["p1"] = FakeDmcClient.Post("p1", "Fanuc 0i");
         var res = await Tools(dmc).DescribePost("p1");
-        Assert.Contains("Описание: нет", res);
-        Assert.Contains("Обложка: нет", res);
-        Assert.Contains("Связи: нет", res);
+        Assert.Contains("Description: none", res);
+        Assert.Contains("Cover: none", res);
+        Assert.Contains("Links: none", res);
     }
 
     [Fact]
     public async Task UnknownIsExplained()
     {
-        Assert.Contains("не нашёл", await Tools(new FakeDmcClient()).DescribePost("nope"));
+        Assert.Contains("did not find", await Tools(new FakeDmcClient()).DescribePost("nope"));
     }
 }

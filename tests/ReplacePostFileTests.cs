@@ -3,8 +3,8 @@ using DmcMcp;
 using Xunit;
 
 /**
- * Новая версия существующего поста: файл во временное хранилище, потом полный PUT с его путём.
- * Перенос из tmp/, удаление старого архива и обновление лицензионного контейнера делает бэкенд.
+ * A new version of an existing post: the file goes to temporary storage, then a full PUT with its path.
+ * Moving it out of tmp/, deleting the old archive and updating the licence container are the backend's job.
  */
 public class ReplacePostFileTests : IDisposable
 {
@@ -32,18 +32,18 @@ public class ReplacePostFileTests : IDisposable
         var (id, body) = Assert.Single(dmc.Puts);
         Assert.Equal("p1", id);
         Assert.Equal("tmp/u1/" + Path.GetFileName(_file), body["productFile"]);
-        // Остальная карточка едет как была — PUT полный.
+        // The rest of the card goes as it was — the PUT is a full one.
         Assert.Equal("Fanuc 0i", ((JsonElement)body["name"]!).GetString());
-        Assert.Contains("заменён", res);
+        Assert.Contains("replaced", res);
         Assert.Contains("https://dmc.test/product/fanuc-0i", res);
     }
 
-    /** У опубликованного поста новый архив уходит в каталог без повторной модерации — об этом говорим. */
+    /** A published post's new archive goes live without re-moderation — say so. */
     [Fact]
     public async Task APublishedPostIsToldTheArchiveGoesLiveAtOnce()
     {
         var res = await Tools(WithPost("PUBLISHED")).ReplacePostFile("p1", _file);
-        Assert.Contains("сразу", res);
+        Assert.Contains("at once", res);
     }
 
     [Fact]
@@ -52,18 +52,18 @@ public class ReplacePostFileTests : IDisposable
         var dmc = WithPost();
         var txt = Path.ChangeExtension(_file, ".txt");
         File.WriteAllText(txt, "x");
-        try { Assert.Contains("не пост", await Tools(dmc).ReplacePostFile("p1", txt)); }
+        try { Assert.Contains("not a post", await Tools(dmc).ReplacePostFile("p1", txt)); }
         finally { File.Delete(txt); }
         Assert.Empty(dmc.Uploads);
     }
 
-    /** Карточку читаем ДО загрузки: чужой или несуществующий id не должен стоить лишнего файла в tmp/. */
+    /** Read the card BEFORE uploading: someone else's or a nonexistent id must not cost a needless file in tmp/. */
     [Fact]
     public async Task UnknownPostIsAnErrorAndNothingIsUploaded()
     {
         var dmc = new FakeDmcClient();
         var res = await Tools(dmc).ReplacePostFile("nope", _file);
-        Assert.Contains("не нашёл", res);
+        Assert.Contains("did not find", res);
         Assert.Empty(dmc.Uploads);
     }
 

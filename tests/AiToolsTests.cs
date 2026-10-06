@@ -2,8 +2,8 @@ using DmcMcp;
 using Xunit;
 
 /**
- * ИИ по запросу. Бэкенд ничего не сохраняет сам: описание — текст, обложка и файлы — пути tmp/…,
- * поэтому каждый инструмент заканчивается полным PUT с новым значением поверх текущей карточки.
+ * AI on request. The backend saves nothing itself: a description is text, a cover and files are tmp/… paths,
+ * so every tool ends with a full PUT of the new value on top of the current card.
  */
 public class AiToolsTests
 {
@@ -27,7 +27,7 @@ public class AiToolsTests
         Assert.Equal("p1", id);
         Assert.Equal("Generated description", body["description"]);
         Assert.Contains("Generated description", res);
-        Assert.Contains("сохранено", res);
+        Assert.Contains("(saved to the card)", res);
     }
 
     [Fact]
@@ -46,7 +46,7 @@ public class AiToolsTests
         var res = await Tools(dmc).RegenerateCover("p1");
         Assert.Equal(new[] { "archive-preview" }, dmc.AiCalls);
         Assert.Equal("tmp/u9/preview.png", Assert.Single(dmc.Puts).Body["imageUrl"]);
-        Assert.Contains("архив", res);
+        Assert.Contains("source: archive", res);
     }
 
     [Fact]
@@ -55,7 +55,7 @@ public class AiToolsTests
         var dmc = WithPost();
         dmc.ArchiveImage = null;
         var res = await Tools(dmc).RegenerateCover("p1");
-        Assert.Contains("нет картинки", res);
+        Assert.Contains("no picture", res);
         Assert.Contains("ai", res);
         Assert.Empty(dmc.Puts);
     }
@@ -74,7 +74,7 @@ public class AiToolsTests
     {
         var dmc = WithPost();
         var res = await Tools(dmc).RegenerateCover("p1", source: "logo");
-        Assert.StartsWith("ОШИБКА", res);
+        Assert.StartsWith("ERROR", res);
         Assert.Contains("archive", res);
         Assert.Empty(dmc.AiCalls);
     }

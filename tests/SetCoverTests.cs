@@ -3,8 +3,8 @@ using DmcMcp;
 using Xunit;
 
 /**
- * Своя обложка — от автора или от агента, если у него есть чем рисовать: файл в хранилище,
- * путь tmp/… в карточку полным PUT. Серверный ИИ при этом не участвует.
+ * Your own cover — from the author, or from the agent if it has something to draw with: the file goes to storage,
+ * the tmp/… path onto the card with a full PUT. The server AI is not involved.
  */
 public class SetCoverTests : IDisposable
 {
@@ -32,8 +32,8 @@ public class SetCoverTests : IDisposable
         var (id, body) = Assert.Single(dmc.Puts);
         Assert.Equal("p1", id);
         Assert.Equal("tmp/u1/" + Path.GetFileName(_png), body["imageUrl"]);
-        Assert.Equal("Fanuc 0i", ((JsonElement)body["name"]!).GetString()); // остальное как было
-        Assert.Contains("Обложка", res);
+        Assert.Equal("Fanuc 0i", ((JsonElement)body["name"]!).GetString()); // the rest as it was
+        Assert.Contains("Cover", res);
         Assert.Contains("https://dmc.test/product/fanuc-0i", res);
         Assert.Empty(dmc.AiCalls);
     }
@@ -44,7 +44,7 @@ public class SetCoverTests : IDisposable
         var dmc = WithPost();
         var txt = Path.ChangeExtension(_png, ".txt");
         File.WriteAllText(txt, "x");
-        try { Assert.Contains("не картинка", await Tools(dmc).SetCover("p1", txt)); }
+        try { Assert.Contains("not a picture", await Tools(dmc).SetCover("p1", txt)); }
         finally { File.Delete(txt); }
         Assert.Empty(dmc.Uploads);
     }
@@ -53,7 +53,7 @@ public class SetCoverTests : IDisposable
     public async Task UnknownPostUploadsNothing()
     {
         var dmc = new FakeDmcClient();
-        Assert.Contains("не нашёл", await Tools(dmc).SetCover("nope", _png));
+        Assert.Contains("did not find", await Tools(dmc).SetCover("nope", _png));
         Assert.Empty(dmc.Uploads);
     }
 

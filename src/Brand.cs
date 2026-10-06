@@ -1,6 +1,6 @@
 namespace DmcMcp;
 
-/// <summary>Единственный файл со ЗНАЧЕНИЯМИ. Остальной код читает их отсюда.</summary>
+/// <summary>The only file with VALUES. The rest of the code reads them from here.</summary>
 public static class Brand
 {
     public const string Product = "Digital Machine Center";
@@ -10,12 +10,12 @@ public static class Brand
     public const string Api = "https://dmc.encycam.com/api";
     public const string Site = "https://dmc.encycam.com";
 
-    /// <summary>Проверено 2026-09-16: этот клиент на encycam-Keycloak принимает loopback-redirect,
-    /// а бэкенд DMC не проверяет `aud`, так что его токен принимается.</summary>
+    /// <summary>Checked 2026-09-16: this client on the encycam Keycloak accepts a loopback redirect,
+    /// and the DMC backend does not check `aud`, so its token is accepted.</summary>
     public const string KeycloakUrl = "https://webservices.encycam.com/keycloak/";
     public const string KeycloakRealm = "licsys";
     public const string KeycloakClient = "dealer-space";
 
-    /// <summary>Папка под %APPDATA% для refresh-токена — своя, не общая с магазином расширений.</summary>
+    /// <summary>The %APPDATA% folder for the refresh token — our own, not shared with the extension store.</summary>
     public const string AuthFolder = "dmc-mcp";
 }

@@ -2,8 +2,8 @@ using DmcMcp;
 using Xunit;
 
 /**
- * `dmc-mcp doctor` — первый вопрос от пользователей будет «у меня не работает». Проверяет вход,
- * что DMC принимает токен и даёт роль паблишера, и что сервер прописан в редакторах.
+ * `dmc-mcp doctor` — the first thing users will say is "it doesn't work for me". It checks the sign-in,
+ * that DMC accepts the token and grants the publisher role, and that the server is registered in the editors.
  */
 public class DoctorTests : IDisposable
 {
@@ -48,7 +48,7 @@ public class DoctorTests : IDisposable
         Assert.Contains("dmc-mcp setup", output);
     }
 
-    /** Codex может быть не установлен — это не поломка, а справка, как и с Claude Code. */
+    /** Codex may not be installed — that is information, not a failure, just as with Claude Code. */
     [Fact]
     public async Task CodexAbsentIsInformationNotFailure()
     {
@@ -90,7 +90,7 @@ public class DoctorTests : IDisposable
         var dmc = new FakeDmcClient { Who = new MeInfo("reader", new[] { "USER" }, "acc-2", null) };
         var (code, output) = await Run(dmc);
         Assert.Equal(1, code);
-        Assert.Contains("паблишер", output);
+        Assert.Contains("publisher", output);
     }
 
     [Fact]
@@ -101,7 +101,7 @@ public class DoctorTests : IDisposable
         Assert.Contains("setup", output);
     }
 
-    /** Claude Code может быть не установлен — это не поломка, а справка. */
+    /** Claude Code may not be installed — that is information, not a failure. */
     [Fact]
     public async Task ClaudeCodeAbsentIsInformationNotFailure()
     {

@@ -1,7 +1,7 @@
 using DmcMcp;
 using Xunit;
 
-/** Хозяйство: что у меня лежит и в каком статусе; убрать ошибочный черновик — и только черновик. */
+/** Housekeeping: what I have and in which status; removing a mistaken draft — and only a draft. */
 public class HousekeepingTests
 {
     private static DmcTools Tools(FakeDmcClient dmc, string? token = "tok") =>
@@ -23,8 +23,8 @@ public class HousekeepingTests
         Assert.Contains("Draft A", res);
         Assert.Contains("Published B", res);
         Assert.DoesNotContain("Some schema", res);
-        Assert.Contains("черновик: 1", res);
-        Assert.Contains("опубликован: 1", res);
+        Assert.Contains("draft: 1", res);
+        Assert.Contains("published: 1", res);
     }
 
     [Fact]
@@ -35,7 +35,7 @@ public class HousekeepingTests
         Assert.DoesNotContain("Published B", res);
     }
 
-    /** По умолчанию — посты; contentType=ANY показывает всё своё с типом, конкретный тип — только его. */
+    /** Posts by default; contentType=ANY lists all your own with their type, a given type lists only that type. */
     [Fact]
     public async Task ListsOtherTypesOnlyWhenAsked()
     {
@@ -48,14 +48,14 @@ public class HousekeepingTests
         Assert.Contains("Some schema", schemas);
         Assert.DoesNotContain("Draft A", schemas);
 
-        Assert.StartsWith("ОШИБКА", await Tools(WithMine()).ListMyPosts(contentType: "TOOLPATH"));
+        Assert.StartsWith("ERROR", await Tools(WithMine()).ListMyPosts(contentType: "TOOLPATH"));
     }
 
     [Fact]
     public async Task RejectsAnUnknownStatus()
     {
         var res = await Tools(WithMine()).ListMyPosts(status: "weird");
-        Assert.StartsWith("ОШИБКА", res);
+        Assert.StartsWith("ERROR", res);
         Assert.Contains("DRAFT", res);
     }
 
@@ -72,18 +72,18 @@ public class HousekeepingTests
         dmc.Products["d1"] = FakeDmcClient.Post("d1", "Draft A");
         var res = await Tools(dmc).DeletePost("d1");
         Assert.Equal("d1", Assert.Single(dmc.Deleted));
-        Assert.Contains("удалён", res);
+        Assert.Contains("deleted", res);
     }
 
-    /** Опубликованное не удаляем инструментом — это снятие с публикации, оно делается в кабинете осознанно. */
+    /** The tool does not delete a published post — that is unpublishing, done deliberately in the DMC account. */
     [Fact]
     public async Task RefusesToDeleteAPublishedPost()
     {
         var dmc = new FakeDmcClient();
         dmc.Products["p2"] = FakeDmcClient.Post("p2", "Published B", status: "PUBLISHED");
         var res = await Tools(dmc).DeletePost("p2");
-        Assert.StartsWith("ОШИБКА", res);
-        Assert.Contains("опубликован", res);
+        Assert.StartsWith("ERROR", res);
+        Assert.Contains("is published", res);
         Assert.Empty(dmc.Deleted);
     }
 
@@ -93,13 +93,13 @@ public class HousekeepingTests
         var dmc = new FakeDmcClient { FailDelete = new DmcHttpException(409, """{"error":"Cannot delete product with active licenses"}""") };
         dmc.Products["d1"] = FakeDmcClient.Post("d1", "Draft A");
         var res = await Tools(dmc).DeletePost("d1");
-        Assert.StartsWith("ОШИБКА", res);
+        Assert.StartsWith("ERROR", res);
         Assert.Contains("active licenses", res);
     }
 
     [Fact]
     public async Task DeleteUnknownIsAnError()
     {
-        Assert.Contains("не нашёл", await Tools(new FakeDmcClient()).DeletePost("nope"));
+        Assert.Contains("did not find", await Tools(new FakeDmcClient()).DeletePost("nope"));
     }
 }

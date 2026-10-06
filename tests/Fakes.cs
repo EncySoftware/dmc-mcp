@@ -1,7 +1,7 @@
 using System.Text.Json;
 using DmcMcp;
 
-/** DMC без сети: карточки лежат в словаре, прогресс импорта — очередь ответов, последний повторяется. */
+/** An offline DMC: cards sit in a dictionary, import progress is a queue of answers, the last one repeats. */
 public class FakeDmcClient : IDmcClient
 {
     public string Site => "https://dmc.test";
@@ -16,7 +16,7 @@ public class FakeDmcClient : IDmcClient
     public Task<ProductInfo?> GetProduct(string idOrSlug, string? accessToken) =>
         Task.FromResult(Products.GetValueOrDefault(idOrSlug));
 
-    /** Что лежало в отправленном zip — инструмент удаляет его сразу после отправки, поэтому смотрим здесь. */
+    /** What the sent zip held — the tool deletes it right after sending, so we look here. */
     public List<string> ZipEntries { get; } = new();
 
     public Task<string> StartImport(string filePath, string importId, bool ai, string? nameHint,
@@ -30,7 +30,7 @@ public class FakeDmcClient : IDmcClient
         return Task.FromResult(importId);
     }
 
-    /** Как бэкенд отвечает на чужой или старый importId. */
+    /** How the backend answers someone else's or an old importId. */
     public DmcHttpException? FailProgress { get; set; }
 
     public Task<ImportProgress> GetImportProgress(string importId, string accessToken)
@@ -57,7 +57,7 @@ public class FakeDmcClient : IDmcClient
         return Task.FromResult(p);
     }
 
-    /** Что «опубликовано» в каталоге и что «своё» — для поиска дублей; что было загружено — для замены архива. */
+    /** "Published" in the catalogue and "your own" for the duplicate search; what was uploaded, for archive replacement. */
     public List<ProductInfo> Published { get; } = new();
     public List<ProductInfo> Mine { get; } = new();
     public List<(string? Query, string? Controller, string? Maker)> Searches { get; } = new();
@@ -79,7 +79,7 @@ public class FakeDmcClient : IDmcClient
         return Task.FromResult($"tmp/u{Uploads.Count}/{Path.GetFileName(filePath)}");
     }
 
-    // ---- связи, удаление, ИИ-помощники
+    // ---- links, deletion, AI helpers
 
     public List<ProductInfo> Schemas { get; } = new();
     public Dictionary<string, List<LinkInfo>> Links { get; } = new();
@@ -87,7 +87,7 @@ public class FakeDmcClient : IDmcClient
     public List<string> Deleted { get; } = new();
     public DmcHttpException? FailDelete { get; set; }
     public string DescriptionText { get; set; } = "Generated description";
-    /** null — «в архиве нет картинки», как 404 от бэкенда. */
+    /** null means "the archive has no picture", like a 404 from the backend. */
     public string? ArchiveImage { get; set; } = "tmp/u9/preview.png";
     public List<string> AiCalls { get; } = new();
 
@@ -131,7 +131,7 @@ public class FakeDmcClient : IDmcClient
     public Task<string> GenerateCodesList(IDictionary<string, object?> productData, string accessToken)
     { AiCalls.Add("codes-list"); return Task.FromResult("tmp/u9/codes.txt"); }
 
-    /** Кто «вошёл» в тестах; FailMe — как бэкенд отвечает на протухший токен. */
+    /** Who is "signed in" in the tests; FailMe is how the backend answers an expired token. */
     public MeInfo Who { get; set; } = new("tester", new[] { "USER", "DEALER" }, "acc-1", "Test Co");
     public DmcHttpException? FailMe { get; set; }
 
@@ -141,7 +141,7 @@ public class FakeDmcClient : IDmcClient
         return Task.FromResult(Who);
     }
 
-    /** Карточка с полным Raw — из него update_post собирает PUT. По умолчанию пост; contentType — для схем. */
+    /** A card with a full Raw — update_post builds the PUT from it. A post by default; contentType is for schemas. */
     public static ProductInfo Post(string id, string name, string status = "DRAFT", string? slug = null,
         string? controller = "Fanuc", string? machineMaker = "Haas", string? machineType = "MILLING",
         string contentType = "POST_PROCESSOR", bool withArchive = true)
@@ -167,7 +167,7 @@ public class FakeDmcClient : IDmcClient
         new("error", reason, "", 0, 1, Array.Empty<ImportComponent>(), Array.Empty<string>());
 }
 
-/** Вход, которого в тестах нет по-настоящему. */
+/** A sign-in that is not real in the tests. */
 public class FakeTokens(string? token = "tok") : DmcTokenProvider
 {
     public override Task<string?> GetAccessToken() => Task.FromResult(token);

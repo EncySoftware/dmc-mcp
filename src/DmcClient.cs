@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace DmcMcp;
 
-/** Ответ DMC не 2xx. Код нужен инструментам, чтобы отличить «войдите» (401) от «нет роли» (403) и «занято» (409). */
+/** A non-2xx answer from DMC. The tools need the code to tell "sign in" (401) from "no role" (403) and "busy" (409). */
 public class DmcHttpException(int status, string body) : Exception($"{status} {body}")
 {
     public int Status { get; } = status;
@@ -13,14 +13,14 @@ public class DmcHttpException(int status, string body) : Exception($"{status} {b
 
 public record ImportComponent(string Name, string ContentType, string ProductId, bool AiEnriched);
 
-/** Состояние фонового импорта, как его отдаёт GET /products/bulk-zip/{id}/progress. */
+/** The state of a background import, as GET /products/bulk-zip/{id}/progress returns it. */
 public record ImportProgress(string Status, string? StatusReason, string? CurrentName, int Done, int Total,
     IReadOnlyList<ImportComponent> Components, IReadOnlyList<string> Errors)
 {
     public bool Finished => Status is "done" or "cancelled" or "error";
 }
 
-/** Карточка: поля, которые инструменты показывают и правят. Raw — весь JSON, из него собирается полный PUT. */
+/** A card: the fields the tools show and edit. Raw is the whole JSON; the full PUT is built from it. */
 public record ProductInfo(string Id, string? Slug, string Name, string ContentType, string PublicationStatus,
     string? Description, string? ControllerManufacturer, string? ControllerSeries, string? ControllerModel,
     string? MachineManufacturer, string? MachineSeries, string? MachineModel, string? MachineType,
@@ -40,47 +40,47 @@ public record ProductInfo(string Id, string? Slug, string Name, string ContentTy
 public interface IDmcClient
 {
     string Site { get; }
-    /** null — нет такого или чужой черновик: бэкенд отвечает 404 в обоих случаях. */
+    /** null — no such thing or someone else's draft: the backend answers 404 in both cases. */
     Task<ProductInfo?> GetProduct(string idOrSlug, string? accessToken);
-    /** Запускает фоновый импорт; возвращает importId, который назвал сервер (обычно тот же). */
+    /** Starts a background import; returns the importId the server named (usually the same one). */
     Task<string> StartImport(string filePath, string importId, bool ai, string? nameHint, string? descriptionHint, string accessToken);
     Task<ImportProgress> GetImportProgress(string importId, string accessToken);
-    /** Полный PUT: body — все поля ProductCreateRequest, частичного у DMC нет. */
+    /** A full PUT: body is every field of ProductCreateRequest; DMC has no partial update. */
     Task<ProductInfo> UpdateProduct(string id, IDictionary<string, object?> body, string accessToken);
     Task<ProductInfo> SetStatus(string id, string status, string accessToken);
-    /** Опубликованные посты по запросу и фильтрам — для поиска дублей. Работает и без входа. */
+    /** Published posts by query and filters — for finding duplicates. Works without sign-in too. */
     Task<IReadOnlyList<ProductInfo>> SearchPublished(string? query, string? controllerManufacturer,
         string? machineManufacturer, string? accessToken);
-    /** Все свои компоненты любого статуса (GET /products/my). */
+    /** All your own components in any status (GET /products/my). */
     Task<IReadOnlyList<ProductInfo>> MyProducts(string accessToken);
-    /** Кладёт файл во временное хранилище; возвращает путь tmp/<uploadId>/<file>, который принимает PUT. */
+    /** Puts the file into temporary storage; returns the tmp/<uploadId>/<file> path that a PUT accepts. */
     Task<string> UploadFile(string filePath, string accessToken);
 
-    /** Опубликованные компоненты по запросу и фильтрам (POST /products/search); contentType null — любого типа. */
+    /** Published components by query and filters (POST /products/search); a null contentType means any type. */
     Task<IReadOnlyList<ProductInfo>> Search(string? contentType, string? query, string? controllerManufacturer,
         string? machineManufacturer, string? accessToken);
     Task<IReadOnlyList<LinkInfo>> GetLinks(string id, string? accessToken);
-    /** POST /products/{id}/links: linkType — MADE_FOR (пост → схемы), SUITABLE, KIT_CONTAINS. */
+    /** POST /products/{id}/links: linkType is MADE_FOR (post → schemas), SUITABLE, KIT_CONTAINS. */
     Task AddLinks(string id, string linkType, IReadOnlyList<string> targetIds, string accessToken);
-    /** DELETE /products/{id}; 409 при активных лицензиях. */
+    /** DELETE /products/{id}; 409 when there are active licences. */
     Task DeleteProduct(string id, string accessToken);
 
-    // ИИ-помощники формы. Сами ничего не сохраняют: текст или путь tmp/… затем уходит в PUT.
+    // The form's AI helpers. They save nothing themselves: the text or the tmp/… path then goes into a PUT.
     Task<string> GenerateDescription(IDictionary<string, object?> productData, string accessToken);
     Task<string> GenerateImage(IDictionary<string, object?> productData, string accessToken);
-    /** null — в архиве нет картинки (бэкенд отвечает 404). */
+    /** null — the archive has no picture (the backend answers 404). */
     Task<string?> ArchivePreview(string productFile, string accessToken);
     Task<string> GenerateSampleCode(IDictionary<string, object?> productData, string accessToken);
     Task<string> GenerateCodesList(IDictionary<string, object?> productData, string accessToken);
 
-    /** Кто вошёл — GET /auth/me: имя, роли (USER, DEALER = паблишер, ADMIN), id строки DMC. */
+    /** Who is signed in — GET /auth/me: name, roles (USER, DEALER = publisher, ADMIN), the DMC row id. */
     Task<MeInfo> Me(string accessToken);
 }
 
-/** Связь с другой карточкой, как её отдаёт GET /products/{id}/links. */
+/** A link to another card, as GET /products/{id}/links returns it. */
 public record LinkInfo(string Id, string LinkType, string Direction, ProductInfo? Product);
 
-/** Ответ /auth/me в объёме, нужном диагностике: роли — по ним видно, может ли человек публиковать. */
+/** The /auth/me answer, as much as diagnostics need: the roles show whether the person can publish. */
 public record MeInfo(string Username, IReadOnlyList<string> Roles, string? AccountId, string? CompanyName)
 {
     public bool IsPublisher => Roles.Contains("DEALER") || Roles.Contains("ADMIN");
@@ -114,10 +114,10 @@ public static class DmcJson
     }
 
     /**
-     * Поля карточки, которых нет в ProductCreateRequest (ProductDto, 2026-09-16): счётчики, снимки
-     * проверки, даты, владелец. Всё остальное едет в PUT обратно как есть. Именно запрещающий список,
-     * а не разрешающий: новое поле на бэкенде тогда возвращается нетронутым, а не обнуляется молча —
-     * лишний ключ Spring по умолчанию игнорирует, а пропущенный он бы принял за «стереть».
+     * Card fields that are not in ProductCreateRequest (ProductDto, 2026-09-16): counters, check
+     * snapshots, dates, owner. Everything else goes back into the PUT as is. Deliberately a deny list,
+     * not an allow list: a new backend field then comes back untouched instead of being silently nulled —
+     * Spring ignores an extra key by default, but would take a missing one to mean "erase".
      */
     public static readonly string[] ReadOnlyFields =
     {
@@ -127,7 +127,7 @@ public static class DmcJson
         "downloadCount", "linkCount", "createdAt", "updatedAt", "publishedAt", "ownerId", "ownerUsername",
     };
 
-    /** Список карточек: голый массив или страница Spring ({"content":[…]}). */
+    /** A list of cards: a bare array or a Spring page ({"content":[…]}). */
     public static List<ProductInfo> Products(JsonElement r)
     {
         var arr = r;
@@ -167,7 +167,7 @@ public static class DmcJson
 
 public class DmcClient : IDmcClient
 {
-    // Архив поста может весить десятки мегабайт, а ответ на загрузку приходит после сохранения — не 15 с.
+    // A post archive can weigh tens of megabytes, and the upload answer comes only after saving — so not 15 s.
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(5) };
 
     private readonly string _api = (Environment.GetEnvironmentVariable("DMC_API") ?? Brand.Api).TrimEnd('/');
@@ -196,7 +196,7 @@ public class DmcClient : IDmcClient
         req.Headers.Add("X-AI-Description", flag);
         req.Headers.Add("X-AI-Image", flag);
         req.Headers.Add("X-AI-Metadata", flag);
-        // Заголовки HTTP — ISO-8859-1: подсказки уходят URL-encoded, как у веб-клиента; бэкенд декодирует UTF-8.
+        // HTTP headers are ISO-8859-1: the hints go URL-encoded, as from the web client; the backend decodes UTF-8.
         if (!string.IsNullOrWhiteSpace(nameHint)) req.Headers.Add("X-AI-Name-Hint", Uri.EscapeDataString(nameHint));
         if (!string.IsNullOrWhiteSpace(descriptionHint)) req.Headers.Add("X-AI-Description-Hint", Uri.EscapeDataString(descriptionHint));
         var r = JsonDocument.Parse(await Read(await Http.SendAsync(req))).RootElement;
@@ -230,7 +230,7 @@ public class DmcClient : IDmcClient
     public async Task<IReadOnlyList<ProductInfo>> SearchPublished(string? query, string? controllerManufacturer,
         string? machineManufacturer, string? accessToken)
     {
-        // Форма ProductSearchRequest: списки для фильтров, page/size для страницы. Только посты.
+        // The ProductSearchRequest shape: lists for filters, page/size for the page. Posts only.
         var body = new Dictionary<string, object?>
         {
             ["contentTypes"] = new[] { "POST_PROCESSOR" },
@@ -264,7 +264,7 @@ public class DmcClient : IDmcClient
         var r = JsonDocument.Parse(await Read(await Http.SendAsync(req))).RootElement;
         return r.TryGetProperty("path", out var p) && p.ValueKind == JsonValueKind.String
             ? p.GetString()!
-            : throw new InvalidOperationException("хранилище не вернуло путь файла");
+            : throw new InvalidOperationException("storage did not return the file path");
     }
 
     public async Task<IReadOnlyList<ProductInfo>> Search(string? contentType, string? query,
@@ -339,7 +339,7 @@ public class DmcClient : IDmcClient
     private static string Field(JsonElement r, string name) =>
         r.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String && v.GetString() is { Length: > 0 } s
             ? s
-            : throw new InvalidOperationException($"DMC не вернул поле {name}");
+            : throw new InvalidOperationException($"DMC did not return the {name} field");
 
     private static async Task<JsonElement> PostJson(string url, object body, string? token)
     {

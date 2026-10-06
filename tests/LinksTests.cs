@@ -1,7 +1,7 @@
 using DmcMcp;
 using Xunit;
 
-/** Явная связь «пост сделан для станка»: поиск схемы по каталогу и MADE_FOR от поста к схемам. */
+/** The explicit "post made for a machine" link: schema search in the catalogue, MADE_FOR from a post to schemas. */
 public class LinksTests
 {
     private static DmcTools Tools(FakeDmcClient dmc, string? token = "tok") =>
@@ -28,7 +28,7 @@ public class LinksTests
     public async Task SearchSchemasRequiresACriterion()
     {
         var dmc = new FakeDmcClient();
-        Assert.StartsWith("ОШИБКА", await Tools(dmc).SearchSchemas());
+        Assert.StartsWith("ERROR", await Tools(dmc).SearchSchemas());
         Assert.Empty(dmc.Searches);
     }
 
@@ -51,15 +51,15 @@ public class LinksTests
         Assert.Contains("Haas VF-4", res);
     }
 
-    /** MADE_FOR идёт только от поста: схему или кит бэкенд отвергнет — говорим раньше него. */
+    /** MADE_FOR only goes from a post: the backend would reject a schema or a kit — say so before it does. */
     [Fact]
     public async Task RefusesToLinkANonPost()
     {
         var dmc = new FakeDmcClient();
         dmc.Products["s1"] = Schema("s1", "Haas VF-2");
         var res = await Tools(dmc).LinkPostToMachines("s1", "s2");
-        Assert.StartsWith("ОШИБКА", res);
-        Assert.Contains("не пост", res);
+        Assert.StartsWith("ERROR", res);
+        Assert.Contains("not a post", res);
         Assert.Empty(dmc.AddedLinks);
     }
 
@@ -68,7 +68,7 @@ public class LinksTests
     {
         var dmc = new FakeDmcClient();
         dmc.Products["p1"] = FakeDmcClient.Post("p1", "Fanuc 0i");
-        Assert.StartsWith("ОШИБКА", await Tools(dmc).LinkPostToMachines("p1", " , "));
+        Assert.StartsWith("ERROR", await Tools(dmc).LinkPostToMachines("p1", " , "));
         Assert.Empty(dmc.AddedLinks);
     }
 }

@@ -1,7 +1,7 @@
 using DmcMcp;
 using Xunit;
 
-/** Подсказка о новой версии: читаем список версий nuget.org и сравниваем с собой; любой сбой — молчание. */
+/** The newer-version hint: read nuget.org's version list and compare it with our own; any failure means silence. */
 public class VersionCheckTests
 {
     [Fact]
@@ -25,7 +25,7 @@ public class VersionCheckTests
         Assert.Null(VersionCheck.NewerThan("", """{"versions":["1.0.0"]}"""));
     }
 
-    /** Версия сборки — «0.3.1.0»; четвёртый ноль не должен мешать сравнению. */
+    /** The assembly version is "0.3.1.0"; the fourth zero must not get in the way of the comparison. */
     [Fact]
     public void AcceptsAFourPartAssemblyVersion()
     {

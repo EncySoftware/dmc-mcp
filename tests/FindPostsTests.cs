@@ -2,8 +2,8 @@ using DmcMcp;
 using Xunit;
 
 /**
- * Поиск дублей до заливки: опубликованное — из каталога, своё — из /products/my. Оба источника
- * в одном ответе, свои помечены, чтобы агент мог сказать «такой уже есть — обновить?».
+ * Looking for duplicates before uploading: published ones from the catalogue, your own from /products/my. Both
+ * sources in one answer, your own marked, so the agent can say "this one already exists — update it?".
  */
 public class FindPostsTests
 {
@@ -20,14 +20,14 @@ public class FindPostsTests
         var res = await Tools(dmc).FindPosts(query: "Fanuc");
 
         Assert.Contains("Fanuc 0i for Haas VF-2", res);
-        Assert.Contains("опубликован", res);
+        Assert.Contains("published", res);
         Assert.Contains("https://dmc.test/product/fanuc-0i-haas", res);
         Assert.Contains("Fanuc 0i-MF draft", res);
-        Assert.Contains("ваш", res);
+        Assert.Contains("[yours]", res);
         Assert.Equal(("Fanuc", null, null), dmc.Searches[0]);
     }
 
-    /** Свои приходят все — фильтруем на месте по имени, стойке и станку, как каталог по запросу. */
+    /** Your own all come back — filter them here by name, control and machine, as the catalogue does by query. */
     [Fact]
     public async Task FiltersOwnPostsByTheQueryLocally()
     {
@@ -45,7 +45,7 @@ public class FindPostsTests
     public async Task NothingFoundSaysSo()
     {
         var res = await Tools(new FakeDmcClient()).FindPosts(controllerManufacturer: "Heidenhain");
-        Assert.Contains("ничего не нашёл", res);
+        Assert.Contains("found nothing", res);
     }
 
     [Fact]
@@ -53,11 +53,11 @@ public class FindPostsTests
     {
         var dmc = new FakeDmcClient();
         var res = await Tools(dmc).FindPosts();
-        Assert.StartsWith("ОШИБКА", res);
+        Assert.StartsWith("ERROR", res);
         Assert.Empty(dmc.Searches);
     }
 
-    /** По умолчанию — только посты; contentType=ANY открывает схемы, интерпретаторы и киты. */
+    /** Posts only by default; contentType=ANY opens up schemas, interpreters and kits. */
     [Fact]
     public async Task OtherTypesOnlyWhenAsked()
     {
@@ -83,12 +83,12 @@ public class FindPostsTests
     {
         var dmc = new FakeDmcClient();
         var res = await Tools(dmc).FindPosts(query: "x", contentType: "TOOLPATH");
-        Assert.StartsWith("ОШИБКА", res);
+        Assert.StartsWith("ERROR", res);
         Assert.Contains("MACHINE_SCHEMA", res);
         Assert.Empty(dmc.Searches);
     }
 
-    /** Без входа опубликованное всё равно ищется; про свои черновики — честное «не видно». */
+    /** Without sign-in the published ones are still searched; for your own drafts, an honest "cannot see them". */
     [Fact]
     public async Task WorksWithoutLoginForPublishedOnly()
     {
