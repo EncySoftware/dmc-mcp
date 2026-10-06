@@ -34,8 +34,20 @@ public static class ServeCommand
             return 1;
         }
         var data = Environment.GetEnvironmentVariable("DMC_MCP_DATA") is { Length: > 0 } d ? d : "/data";
-        await Build(args, key, data).RunAsync();
-        return 0;
+        return await RunUntilStopped(Build(args, key, data));
+    }
+
+    /**
+     * 0 for an orderly stop; 1 when a background service crashed — .NET then stops the host, and an exit code of 0
+     * would tell a restart policy (on-failure) that nothing went wrong.
+     */
+    internal static async Task<int> RunUntilStopped(WebApplication app)
+    {
+        // Taken before the run: RunAsync disposes the services when it returns.
+        var background = app.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+            .OfType<Microsoft.Extensions.Hosting.BackgroundService>().ToList();
+        await app.RunAsync();
+        return background.Any(s => s.ExecuteTask is { IsFaulted: true }) ? 1 : 0;
     }
 
     internal static WebApplication Build(string[] args, string key, string dataDir, Action<IServiceCollection>? configure = null)

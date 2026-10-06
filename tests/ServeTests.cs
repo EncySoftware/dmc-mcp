@@ -125,6 +125,41 @@ public class ServeTests : IAsyncLifetime
         }
     }
 
+    /**
+     * A background service that crashes stops the host (.NET's default), and serve used to return 0 all the same —
+     * a restart policy of on-failure would leave the server down. A crash is now a non-zero exit code.
+     */
+    [Fact]
+    public async Task ACrashedBackgroundServiceMakesANonZeroExit()
+    {
+        var data = _data + "-crash";
+        await using var app = ServeCommand.Build(new[] { "--urls", "http://127.0.0.1:0" }, Key, data,
+            s => Microsoft.Extensions.DependencyInjection.ServiceCollectionHostedServiceExtensions.AddHostedService<Crashing>(s));
+        Assert.Equal(1, await ServeCommand.RunUntilStopped(app));
+        try { Directory.Delete(data, true); } catch { }
+    }
+
+    [Fact]
+    public async Task AnOrderlyStopIsExitCodeZero()
+    {
+        var data = _data + "-stop";
+        await using var app = ServeCommand.Build(new[] { "--urls", "http://127.0.0.1:0" }, Key, data);
+        var run = ServeCommand.RunUntilStopped(app);
+        await Task.Delay(300);
+        await app.StopAsync();
+        Assert.Equal(0, await run);
+        try { Directory.Delete(data, true); } catch { }
+    }
+
+    private sealed class Crashing : Microsoft.Extensions.Hosting.BackgroundService
+    {
+        protected override async Task ExecuteAsync(CancellationToken stop)
+        {
+            await Task.Yield();
+            throw new InvalidOperationException("crash");
+        }
+    }
+
     /** The request's CancellationToken is bound by the SDK — an agent never sees it as a tool argument. */
     [Fact]
     public async Task ToolSchemasDoNotShowTheCancellationToken()
