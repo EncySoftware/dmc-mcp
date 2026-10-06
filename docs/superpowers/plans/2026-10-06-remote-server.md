@@ -1418,7 +1418,7 @@ public class ServeTests : IAsyncLifetime
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Key);
         var resp = await _http.SendAsync(req);
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
-        Assert.Contains("\\u0022file\\u0022", await resp.Content.ReadAsStringAsync().ContinueWith(t => t.Result.Replace("\"file\"", "\\u0022file\\u0022")));
+        Assert.Contains("field", await resp.Content.ReadAsStringAsync());
     }
 }
 ```

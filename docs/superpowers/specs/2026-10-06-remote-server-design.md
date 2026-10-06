@@ -67,9 +67,10 @@ The server's MCP `instructions` describe the upload route, so an agent learns it
 
 ## Where it runs
 
-- Docker image from the repository's `Dockerfile` (SDK 8.0 build, `aspnet:8.0` runtime, user
-  `app`), built on the server straight from a tag:
-  `docker build -t dmc-mcp:v0.8.0 https://github.com/EncySoftware/dmc-mcp.git#v0.8.0`.
+- Docker image from the repository's `Dockerfile`: the dotnet tool exactly as published on nuget.org, unpacked
+  onto the `aspnet:8.0` runtime (user `app`). Nothing is compiled on the server — the VPS has two cores and
+  3.8 GB, most of it the backend's:
+  `docker build --build-arg VERSION=0.8.0 -t dmc-mcp:0.8.0 https://github.com/EncySoftware/dmc-mcp.git#v0.8.0`.
 - Container `dmc-mcp`, `--restart unless-stopped`, published on `127.0.0.1:8095` only, env file
   `/opt/dmc-mcp/dmc-mcp.env` (root-only, holds the key), volume `/opt/dmc-mcp/data:/data`.
   `deploy/update.sh <tag>` rebuilds and replaces the container; first-time setup is in the README.
@@ -93,4 +94,4 @@ Danil gets `https://dmc.encycam.com/mcp/<key>` (or `/mcp` plus the header), and 
 
 - Hermes's account: a `licsys` user without two-factor and with no pending required actions, and
   the Publisher role in DMC.
-- Port 8095 free on the VPS (checked before the first run).
+- Port 8095 free on the VPS (checked 6 October: 8080/8081 are the backend's blue/green, 8090/8091 a neighbour's).
