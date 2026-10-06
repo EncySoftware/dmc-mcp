@@ -59,6 +59,41 @@ public class ZipFolderTests : IDisposable
         Assert.False(File.Exists(Path.Combine(_dir, "evil.sppx")));
     }
 
+    /**
+     * The declared size is the zip's own claim: a Stored entry that says 1 byte unpacks to all its data, and
+     * central directory records may even share one block. The limit counts what is actually written.
+     */
+    [Fact]
+    public void LyingSizesDoNotGetPastTheLimit()
+    {
+        var path = Path.Combine(_dir, "liar.zip");
+        using (var z = ZipFile.Open(path, ZipArchiveMode.Create))
+        using (var s = z.CreateEntry("a.sppx", CompressionLevel.NoCompression).Open())
+            s.Write(new byte[10_000]);
+        DeclareUncompressedSize(path, 1);
+        using (var check = ZipFile.OpenRead(path)) Assert.Equal(1, check.Entries[0].Length);
+
+        var into = Path.Combine(_dir, "out");
+        var (dir, error) = ZipFolder.Extract(path, into, maxBytes: 1_000);
+        Assert.Null(dir);
+        Assert.Contains("more than", error);
+        Assert.False(Directory.Exists(into) && Directory.EnumerateFiles(into, "*", SearchOption.AllDirectories).Any());
+    }
+
+    /** Rewrites the uncompressed size in the local header and the central directory — what a crafted zip does. */
+    private static void DeclareUncompressedSize(string path, uint size)
+    {
+        var bytes = File.ReadAllBytes(path);
+        var value = BitConverter.GetBytes(size);
+        for (int i = 0; i + 4 <= bytes.Length; i++)
+        {
+            if (bytes[i] != 0x50 || bytes[i + 1] != 0x4B) continue;
+            if (bytes[i + 2] == 0x03 && bytes[i + 3] == 0x04) value.CopyTo(bytes, i + 22); // local file header
+            if (bytes[i + 2] == 0x01 && bytes[i + 3] == 0x02) value.CopyTo(bytes, i + 24); // central directory
+        }
+        File.WriteAllBytes(path, bytes);
+    }
+
     [Fact]
     public void NotAZipIsReported()
     {

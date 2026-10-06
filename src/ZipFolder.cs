@@ -13,18 +13,31 @@ public static class ZipFolder
     public const int MaxEntries = 5000;
     public const long MaxBytes = 1024L * 1024 * 1024;
 
-    public static (string? Dir, string? Error) Extract(string zipPath, string intoDir)
+    /// <summary>
+    /// Unpacks into intoDir, a fresh folder. The size limit counts the bytes actually written, not the sizes the
+    /// zip declares: a Stored entry is read for its compressed length whatever its Length says, and central
+    /// directory records may point at the same data. On an error intoDir is removed.
+    /// </summary>
+    public static (string? Dir, string? Error) Extract(string zipPath, string intoDir, long maxBytes = MaxBytes)
+    {
+        var tooBig = "ERROR: the zip unpacks to more than " + (maxBytes >= 1L << 30 ? $"{maxBytes >> 30} GB." : $"{maxBytes} bytes.");
+        var root = Path.GetFullPath(intoDir);
+        var (dir, error) = Unpack(zipPath, root, maxBytes, tooBig);
+        if (error != null) try { Directory.Delete(root, true); } catch { /* nothing was written, or the caller sweeps */ }
+        return (dir, error);
+    }
+
+    private static (string? Dir, string? Error) Unpack(string zipPath, string root, long maxBytes, string tooBig)
     {
         try
         {
             using var zip = ZipFile.OpenRead(zipPath);
             if (zip.Entries.Count > MaxEntries)
                 return (null, $"ERROR: the zip has {zip.Entries.Count} entries; at most {MaxEntries}.");
-            long total = 0;
-            foreach (var e in zip.Entries) total += e.Length;
-            if (total > MaxBytes) return (null, "ERROR: the zip unpacks to more than 1 GB.");
+            long declared = 0;
+            foreach (var e in zip.Entries) declared += e.Length;
+            if (declared > maxBytes) return (null, tooBig); // an honest zip is refused before anything is written
 
-            var root = Path.GetFullPath(intoDir);
             foreach (var e in zip.Entries)
             {
                 var rel = e.FullName.Replace('\\', '/');
@@ -32,6 +45,8 @@ public static class ZipFolder
                     return (null, $"ERROR: the zip entry \"{e.FullName}\" points outside the folder.");
             }
             Directory.CreateDirectory(root);
+            long written = 0;
+            var buffer = new byte[81920];
             foreach (var e in zip.Entries)
             {
                 var dest = Path.GetFullPath(Path.Combine(root, e.FullName.Replace('\\', '/')));
@@ -43,7 +58,15 @@ public static class ZipFolder
                     continue;
                 }
                 Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                e.ExtractToFile(dest, overwrite: true);
+                using var src = e.Open();
+                using var dst = File.Create(dest);
+                int n;
+                while ((n = src.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    written += n;
+                    if (written > maxBytes) return (null, tooBig);
+                    dst.Write(buffer, 0, n);
+                }
             }
 
             var top = Directory.GetFileSystemEntries(root);
