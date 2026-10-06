@@ -12,6 +12,12 @@ public class DmcTokenProvider
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(20) };
 
+    /** The HTTP client for Keycloak's refresh — replaced in tests. */
+    internal HttpClient Client { get; init; } = Http;
+
+    /** One refresh at a time: with refresh-token rotation, a second refresh with the same token fails. */
+    private readonly SemaphoreSlim _refreshing = new(1, 1);
+
     private readonly string _tokenEndpoint =
         Environment.GetEnvironmentVariable("DMC_KEYCLOAK_TOKEN_ENDPOINT")
         ?? $"{Brand.KeycloakUrl}realms/{Brand.KeycloakRealm}/protocol/openid-connect/token";
@@ -34,9 +40,12 @@ public class DmcTokenProvider
     private string? _cachedAccess;
     private DateTimeOffset _cachedUntil = DateTimeOffset.MinValue;
 
+    /** DMC_AUTH_FILE points the token file elsewhere — tests use it; the hosted server sets XDG_CONFIG_HOME instead. */
     public static string AuthFilePath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            Brand.AuthFolder, "auth.json");
+        Environment.GetEnvironmentVariable("DMC_AUTH_FILE") is { Length: > 0 } file
+            ? file
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                Brand.AuthFolder, "auth.json");
 
     /// <summary>Fresh access token: env override → cached → minted from the stored refresh token.
     /// Null when the user never logged in (callers should point at `dmc-mcp login`).</summary>
@@ -47,30 +56,39 @@ public class DmcTokenProvider
 
         if (_cachedAccess != null && DateTimeOffset.UtcNow < _cachedUntil) return _cachedAccess;
 
-        var stored = ReadStored();
-        if (stored.Refresh == null) return null;
-
-        // Refresh with the client that ISSUED the token: a refresh token belongs to its client, so
-        // signing in through the browser under one client and refreshing under another fails
-        // silently. Tokens saved without a client name predate this rule, hence the fallback.
-        var resp = await Http.PostAsync(_tokenEndpoint, new FormUrlEncodedContent(new Dictionary<string, string>
+        // Over HTTP several calls can find the cache expired at once; the first refreshes, the rest wait
+        // and take what it cached.
+        await _refreshing.WaitAsync();
+        try
         {
-            ["grant_type"] = "refresh_token",
-            ["client_id"] = stored.ClientId ?? _clientId,
-            ["refresh_token"] = stored.Refresh,
-        }));
-        var json = await resp.Content.ReadAsStringAsync();
-        if (!resp.IsSuccessStatusCode)
-            throw new InvalidOperationException(
-                "DMC login expired or was revoked - run `dmc-mcp login` again. (" + Trim(json) + ")");
-        using var doc = JsonDocument.Parse(json);
-        _cachedAccess = doc.RootElement.GetProperty("access_token").GetString();
-        int expiresIn = doc.RootElement.TryGetProperty("expires_in", out var e) ? e.GetInt32() : 300;
-        _cachedUntil = DateTimeOffset.UtcNow.AddSeconds(Math.Max(60, expiresIn - 60));
-        // Keycloak rotates refresh tokens - keep the newest one.
-        if (doc.RootElement.TryGetProperty("refresh_token", out var rt) && rt.GetString() is { Length: > 0 } newRefresh)
-            SaveRefreshToken(newRefresh, stored.ClientId ?? _clientId);
-        return _cachedAccess;
+            if (_cachedAccess != null && DateTimeOffset.UtcNow < _cachedUntil) return _cachedAccess;
+
+            var stored = ReadStored();
+            if (stored.Refresh == null) return null;
+
+            // Refresh with the client that ISSUED the token: a refresh token belongs to its client, so
+            // signing in through the browser under one client and refreshing under another fails
+            // silently. Tokens saved without a client name predate this rule, hence the fallback.
+            var resp = await Client.PostAsync(_tokenEndpoint, new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["grant_type"] = "refresh_token",
+                ["client_id"] = stored.ClientId ?? _clientId,
+                ["refresh_token"] = stored.Refresh,
+            }));
+            var json = await resp.Content.ReadAsStringAsync();
+            if (!resp.IsSuccessStatusCode)
+                throw new InvalidOperationException(
+                    "DMC login expired or was revoked - run `dmc-mcp login` again. (" + Trim(json) + ")");
+            using var doc = JsonDocument.Parse(json);
+            _cachedAccess = doc.RootElement.GetProperty("access_token").GetString();
+            int expiresIn = doc.RootElement.TryGetProperty("expires_in", out var e) ? e.GetInt32() : 300;
+            _cachedUntil = DateTimeOffset.UtcNow.AddSeconds(Math.Max(60, expiresIn - 60));
+            // Keycloak rotates refresh tokens - keep the newest one.
+            if (doc.RootElement.TryGetProperty("refresh_token", out var rt) && rt.GetString() is { Length: > 0 } newRefresh)
+                SaveRefreshToken(newRefresh, stored.ClientId ?? _clientId);
+            return _cachedAccess;
+        }
+        finally { _refreshing.Release(); }
     }
 
     /**
