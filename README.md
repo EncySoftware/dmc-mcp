@@ -137,7 +137,7 @@ the server; callers need the server's key.
 
 **Running it (operators):** on the server, once —
 
-    mkdir -p /opt/dmc-mcp/data && chown 1654:1654 /opt/dmc-mcp/data
+    mkdir -p /opt/dmc-mcp/data && chown 1654:1654 /opt/dmc-mcp/data && chmod 700 /opt/dmc-mcp/data
     printf 'DMC_MCP_KEY=%s\n' "$(openssl rand -hex 32)" > /opt/dmc-mcp/dmc-mcp.env && chmod 600 /opt/dmc-mcp/dmc-mcp.env
     sh deploy/update.sh 0.8.0
     docker exec -it dmc-mcp dotnet /app/dmc-mcp.dll login --password    # the server's DMC account

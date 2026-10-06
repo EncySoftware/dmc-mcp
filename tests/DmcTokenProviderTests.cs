@@ -45,6 +45,34 @@ public class DmcTokenProviderTests
         }
     }
 
+    /**
+     * The refresh token is an offline session: whoever reads the file acts as the account. Under a umask of 022 it
+     * came out 0644 — on the hosted server readable by every user of the VPS. Rewritten, it is the owner's alone.
+     * (Unix only: the test passes vacuously on Windows, where the profile folder is the user's.)
+     */
+    [Fact]
+    public async Task TheStoredTokenIsReadableByItsOwnerOnly()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var dir = Path.Combine(Path.GetTempPath(), "dmc-auth-" + Guid.NewGuid().ToString("N")[..8]);
+        var file = Path.Combine(dir, "dmc-mcp", "auth.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        File.WriteAllText(file, """{"refresh_token":"r1","client_id":"dealer-space"}""");
+        File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+        Environment.SetEnvironmentVariable("DMC_AUTH_FILE", file);
+        try
+        {
+            await new DmcTokenProvider { Client = new HttpClient(new CountingKeycloak()) }.GetAccessToken();
+            Assert.Contains("r2", File.ReadAllText(file));
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(file));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("DMC_AUTH_FILE", null);
+            Directory.Delete(dir, true);
+        }
+    }
+
     private sealed class CountingKeycloak : HttpMessageHandler
     {
         public int Calls;

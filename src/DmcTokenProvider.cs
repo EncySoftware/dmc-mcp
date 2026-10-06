@@ -181,11 +181,28 @@ public class DmcTokenProvider
         catch (Exception) { return new Stored(null, null); }
     }
 
+    /**
+     * The refresh token is an offline session: whoever reads the file acts as the account. On Unix the file is
+     * the owner's alone (0600) and a folder created for it 0700 — under the usual umask 022 they came out
+     * world-readable, on the hosted server to every user of the VPS. An older file is narrowed on rewrite.
+     */
     private static void SaveRefreshToken(string refresh, string clientId)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(AuthFilePath)!);
-        File.WriteAllText(AuthFilePath,
-            JsonSerializer.Serialize(new { refresh_token = refresh, client_id = clientId }));
+        var json = JsonSerializer.Serialize(new { refresh_token = refresh, client_id = clientId });
+        var dir = Path.GetDirectoryName(AuthFilePath)!;
+        if (OperatingSystem.IsWindows())
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(AuthFilePath, json);
+            return;
+        }
+        const UnixFileMode ownerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        Directory.CreateDirectory(dir, ownerOnly | UnixFileMode.UserExecute);
+        using (var f = new FileStream(AuthFilePath, new FileStreamOptions
+               { Mode = FileMode.Create, Access = FileAccess.Write, UnixCreateMode = ownerOnly }))
+        using (var w = new StreamWriter(f))
+            w.Write(json);
+        File.SetUnixFileMode(AuthFilePath, ownerOnly); // UnixCreateMode applies only to a file it creates
     }
 
     private static string ReadHidden()

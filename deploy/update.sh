@@ -6,6 +6,8 @@
 set -eu
 V="${1:?usage: update.sh <version>, e.g. 0.8.0}"
 docker build --build-arg VERSION="$V" -t "dmc-mcp:$V" "https://github.com/EncySoftware/dmc-mcp.git#v$V"
+# The data folder holds the sign-in (an offline refresh token) and the uploads: the container's user only.
+chmod 700 /opt/dmc-mcp/data
 docker rm -f dmc-mcp 2>/dev/null || true
 docker run -d --name dmc-mcp --restart unless-stopped \
   -p 127.0.0.1:8095:8080 \
