@@ -66,6 +66,16 @@ public class ManifestTests : IDisposable
         var e = Assert.Throws<InvalidDataException>(() => Manifest.Parse(Csv("file,travelXMm\nvf2.zip,508mm\n")));
         Assert.Contains("travelXMm", e.Message);
     }
+
+    /** On the hosted server a manifest can come by link: a gigabyte of CSV is not read into strings. */
+    [Fact]
+    public void AnOversizedManifestIsRefusedUnread()
+    {
+        var sb = new System.Text.StringBuilder("file,name\n");
+        while (sb.Length <= Manifest.MaxBytes) sb.Append("post.sppx,A post with a name\n");
+        var e = Assert.Throws<InvalidDataException>(() => Manifest.Parse(Csv(sb.ToString())));
+        Assert.Contains("larger than", e.Message);
+    }
 }
 
 /**

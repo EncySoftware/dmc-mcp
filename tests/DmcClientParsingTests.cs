@@ -68,3 +68,25 @@ public class DmcClientParsingTests
         Assert.Equal(new[] { "name", "numberOfAxes", "productFile" }, req.Keys.OrderBy(k => k).ToArray());
     }
 }
+
+/** Files go to DMC from the disk as they are read: on the hosted server one can weigh a gigabyte. */
+public class DmcClientUploadTests : IDisposable
+{
+    private readonly string _file = Path.Combine(Path.GetTempPath(), "dmc-up-" + Guid.NewGuid().ToString("N")[..8] + ".zip");
+    public void Dispose() { try { File.Delete(_file); } catch { } }
+
+    [Fact]
+    public void TheFileIsStreamedNotLoaded()
+    {
+        using (var f = File.Create(_file)) f.SetLength(32L * 1024 * 1024);
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        using (var form = DmcClient.FileForm(_file))
+        {
+            Assert.InRange(form.Headers.ContentLength ?? 0, 32L * 1024 * 1024, 32L * 1024 * 1024 + 1000); // known up front
+            form.CopyTo(Stream.Null, null, default);
+        }
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.True(allocated < 4 * 1024 * 1024, $"{allocated / (1024 * 1024)} MB allocated for a 32 MB file");
+        File.Delete(_file); // the form let go of it
+    }
+}

@@ -20,6 +20,8 @@ internal sealed class Manifest
         "travelXMm", "travelYMm", "travelZMm",
     };
 
+    internal const long MaxBytes = 10L * 1024 * 1024;
+
     private readonly Dictionary<string, ManifestEntry> _byFile = new(StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlyCollection<string> Files => _byFile.Keys;
@@ -29,6 +31,10 @@ internal sealed class Manifest
 
     public static Manifest Parse(string path)
     {
+        // A row per component: 10 MB is thousands of rows with long descriptions. A manifest can come by link on
+        // the hosted server, and a gigabyte of CSV would be read into twice as many bytes of strings.
+        if (new FileInfo(path).Length > MaxBytes)
+            throw new InvalidDataException($"the manifest is larger than {MaxBytes / (1024 * 1024)} MB — one line per component is far less");
         var lines = File.ReadAllLines(path, Encoding.UTF8).Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
         if (lines.Count == 0) throw new InvalidDataException("manifest is empty");
 

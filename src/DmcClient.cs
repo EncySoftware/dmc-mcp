@@ -185,10 +185,7 @@ public class DmcClient : IDmcClient
     public async Task<string> StartImport(string filePath, string importId, bool ai, string? nameHint,
         string? descriptionHint, string accessToken)
     {
-        using var form = new MultipartFormDataContent();
-        var bytes = new ByteArrayContent(await File.ReadAllBytesAsync(filePath));
-        bytes.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
-        form.Add(bytes, "file", Path.GetFileName(filePath));
+        using var form = FileForm(filePath);
         using var req = new HttpRequestMessage(HttpMethod.Post, $"{_api}/products/bulk-zip-async") { Content = form };
         Auth(req, accessToken);
         req.Headers.Add("X-Import-Id", importId);
@@ -255,10 +252,7 @@ public class DmcClient : IDmcClient
 
     public async Task<string> UploadFile(string filePath, string accessToken)
     {
-        using var form = new MultipartFormDataContent();
-        var bytes = new ByteArrayContent(await File.ReadAllBytesAsync(filePath));
-        bytes.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
-        form.Add(bytes, "file", Path.GetFileName(filePath));
+        using var form = FileForm(filePath);
         using var req = new HttpRequestMessage(HttpMethod.Post, $"{_api}/storage/upload") { Content = form };
         Auth(req, accessToken);
         var r = JsonDocument.Parse(await Read(await Http.SendAsync(req))).RootElement;
@@ -354,6 +348,19 @@ public class DmcClient : IDmcClient
     {
         if (!string.IsNullOrEmpty(token))
             req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+    }
+
+    /**
+     * The multipart body with the file as the "file" field, streamed from the disk as it is sent — on the hosted
+     * server a file may weigh a gigabyte. The length is known up front; disposing the form closes the file.
+     */
+    internal static MultipartFormDataContent FileForm(string filePath)
+    {
+        var form = new MultipartFormDataContent();
+        var file = new StreamContent(File.OpenRead(filePath), 81920);
+        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        form.Add(file, "file", Path.GetFileName(filePath));
+        return form;
     }
 
     private static async Task<string> Read(HttpResponseMessage resp)
