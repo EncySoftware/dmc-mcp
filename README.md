@@ -122,6 +122,29 @@ command = "dmc-mcp"
 
 Everything that ties the tool to DMC lives in one file — `src/Brand.cs`.
 
+## Hosted server (for agents that cannot run a local process)
+
+`dmc-mcp serve` runs the same tools over MCP Streamable HTTP. One DMC account (a publisher) is signed in once on
+the server; callers need the server's key.
+
+- **URL:** `https://dmc.encycam.com/mcp` with `Authorization: Bearer <key>`, or `https://dmc.encycam.com/mcp/<key>`
+  for clients that take a URL only.
+- **Files:** the server cannot read paths. Upload first and pass the returned `upload:<id>` (24 hours), or pass an
+  https link. `publish_folder` takes the folder as a zip.
+
+      curl -H "Authorization: Bearer <key>" -F file=@post.sppx https://dmc.encycam.com/mcp/upload
+      {"file":"upload:3f0c…","name":"post.sppx","size":51234,"expiresAt":"…"}
+
+**Running it (operators):** on the server, once —
+
+    mkdir -p /opt/dmc-mcp/data && chown 1654:1654 /opt/dmc-mcp/data
+    printf 'DMC_MCP_KEY=%s\n' "$(openssl rand -hex 32)" > /opt/dmc-mcp/dmc-mcp.env && chmod 600 /opt/dmc-mcp/dmc-mcp.env
+    sh deploy/update.sh 0.8.0
+    docker exec -it dmc-mcp dotnet /app/dmc-mcp.dll login --password    # the server's DMC account
+
+then `sh deploy/update.sh <version>` for every release. `docker logs dmc-mcp` says whom the server is signed in as.
+nginx proxies `/mcp` to `127.0.0.1:8095` without buffering, with 15-minute timeouts and no access log.
+
 ## Development
 
 ```bash
