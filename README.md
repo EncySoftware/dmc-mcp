@@ -144,7 +144,9 @@ the server; callers need the server's key.
 
 then `sh deploy/update.sh <version>` for every release. Within a minute of the sign-in `docker logs dmc-mcp`
 says whom the server is signed in as, with the roles; it warns if Publisher is missing.
-nginx proxies `/mcp` to `127.0.0.1:8095` without buffering, with 15-minute timeouts and no access log.
+nginx proxies `/mcp` to `127.0.0.1:8095` without buffering, with 15-minute timeouts and with neither access nor
+error log: an error line quotes the request line, and with it a key in the path. Clients that can set a header should
+use `Authorization: Bearer`; the path form is for URL-only clients.
 
 ## Development
 

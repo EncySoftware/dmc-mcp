@@ -1703,7 +1703,8 @@ git commit -m "0.8.0: dmc-mcp serve — the hosted server, its image and deploy 
 
 ```nginx
 # dmc-mcp — the hosted MCP server for agents (EncySoftware/dmc-mcp, Docker on 127.0.0.1:8095). The key may sit in
-# the path, so these requests are not logged; imports stream progress for up to 10 minutes, so nothing is buffered.
+# the path, so neither log keeps these requests: an error line (upstream refused during a deploy, a timeout, a 413)
+# quotes the request line, key included. Imports stream progress for up to 10 minutes, so nothing is buffered.
 location = /mcp {
     proxy_pass http://127.0.0.1:8095;
     proxy_http_version 1.1;
@@ -1716,6 +1717,7 @@ location = /mcp {
     proxy_send_timeout 900s;
     client_max_body_size 1g;
     access_log off;
+    error_log /dev/null;
 }
 location ^~ /mcp/ {
     proxy_pass http://127.0.0.1:8095;
@@ -1729,6 +1731,7 @@ location ^~ /mcp/ {
     proxy_send_timeout 900s;
     client_max_body_size 1g;
     access_log off;
+    error_log /dev/null;
 }
 ```
 

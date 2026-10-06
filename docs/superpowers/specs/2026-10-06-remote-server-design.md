@@ -40,8 +40,10 @@ A random key (`DMC_MCP_KEY`, at least 32 characters; the server refuses to start
 request is let in when it carries `Authorization: Bearer <key>`, or when the key is the first path
 segment after `/mcp` (`/mcp/<key>`, `/mcp/<key>/upload`) — for clients that cannot set headers,
 such as connectors configured by URL only. The segment is stripped before routing. Anything else is
-401. The comparison is constant-time. Because the key may travel in the path, nginx does not log
-these requests and ASP.NET's request logging is kept at Warning.
+401. The comparison is constant-time. Because the key may travel in the path, nginx keeps neither an
+access log nor an error log for these locations (an error line — upstream refused during a deploy,
+a timeout, a 413 — quotes the request line, key included), and ASP.NET's request logging is kept at
+Warning. Clients that can set a header should use Bearer; the path form is for URL-only clients.
 
 ## Files
 
@@ -73,13 +75,14 @@ The server's MCP `instructions` describe the upload route, so an agent learns it
   onto the `aspnet:8.0` runtime (user `app`). Nothing is compiled on the server — the VPS has two cores and
   3.8 GB, most of it the backend's:
   `docker build --build-arg VERSION=0.8.0 -t dmc-mcp:0.8.0 https://github.com/EncySoftware/dmc-mcp.git#v0.8.0`.
-- Container `dmc-mcp`, `--restart unless-stopped`, published on `127.0.0.1:8095` only, env file
+- Container `dmc-mcp`, `--restart unless-stopped`, `--memory 1g` and `--pids-limit 256` (if it runs away,
+  the kernel stops it rather than the backend), published on `127.0.0.1:8095` only, env file
   `/opt/dmc-mcp/dmc-mcp.env` (root-only, holds the key), volume `/opt/dmc-mcp/data:/data`.
   `deploy/update.sh <tag>` rebuilds and replaces the container; first-time setup is in the README.
 - nginx: `location = /mcp` and `location ^~ /mcp/` in the DMC frontend repository's
   `nginx-kc-proxy.conf` (deployed with the frontend, after `nginx -t`), proxying to
   `127.0.0.1:8095` with buffering off, 900 s read/send timeouts (imports stream progress for up to
-  10 minutes), `client_max_body_size 1g` and `access_log off`.
+  10 minutes), `client_max_body_size 1g`, `access_log off` and `error_log /dev/null`.
 
 Danil gets `https://dmc.encycam.com/mcp/<key>` (or `/mcp` plus the header), and the upload command.
 
