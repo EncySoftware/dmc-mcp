@@ -51,6 +51,32 @@ public class UploadStoreTests : IDisposable
         Assert.StartsWith(Path.GetFullPath(_root), Path.GetFullPath(Store().Resolve(saved.Ref)!));
     }
 
+    /** 1 GB a file and 24 hours each, but not without end: past the total the store refuses, keeping nothing. */
+    [Fact]
+    public async Task AFullStoreRefusesAndKeepsNothingOfTheRefusedFile()
+    {
+        var store = new UploadStore(_root, () => _now) { MaxTotalBytes = 10 };
+        await store.Save(new MemoryStream(new byte[8]), "a.sppx");
+        await Assert.ThrowsAsync<UploadStore.FullException>(() => store.Save(new MemoryStream(new byte[8]), "b.sppx"));
+        Assert.Single(Directory.GetDirectories(_root));
+        Assert.Equal(8, store.UsedBytes());
+    }
+
+    /** ReadFormAsync buffers each upload on the container's disk before Save: at most two at a time. */
+    [Fact]
+    public void AtMostTwoUploadsAtOnce()
+    {
+        var store = Store();
+        using var a = store.TryBegin();
+        var b = store.TryBegin();
+        Assert.NotNull(a);
+        Assert.NotNull(b);
+        Assert.Null(store.TryBegin());
+        b!.Dispose();
+        using var c = store.TryBegin();
+        Assert.NotNull(c);
+    }
+
     [Fact]
     public async Task ReferenceIsCaseInsensitive()
     {

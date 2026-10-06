@@ -129,8 +129,8 @@ the server; callers need the server's key.
 
 - **URL:** `https://dmc.encycam.com/mcp` with `Authorization: Bearer <key>`, or `https://dmc.encycam.com/mcp/<key>`
   for clients that take a URL only.
-- **Files:** the server cannot read paths. Upload first and pass the returned `upload:<id>` (24 hours), or pass an
-  https link. `publish_folder` takes the folder as a zip.
+- **Files:** the server cannot read paths. Upload first and pass the returned `upload:<id>` (24 hours; at most
+  1 GB a file, 5 GB in all, two uploads at a time), or pass an https link. `publish_folder` takes the folder as a zip.
 
       curl -H "Authorization: Bearer <key>" -F file=@post.sppx https://dmc.encycam.com/mcp/upload
       {"file":"upload:3f0c…","name":"post.sppx","size":51234,"expiresAt":"…"}

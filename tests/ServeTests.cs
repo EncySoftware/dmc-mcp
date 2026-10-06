@@ -92,6 +92,60 @@ public class ServeTests : IAsyncLifetime
         Assert.Contains("\"size\":31000000", await resp.Content.ReadAsStringAsync());
     }
 
+    private static HttpRequestMessage Upload(byte[] bytes, string name)
+    {
+        var form = new MultipartFormDataContent { { new ByteArrayContent(bytes), "file", name } };
+        var req = new HttpRequestMessage(HttpMethod.Post, "/mcp/upload") { Content = form };
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Key);
+        return req;
+    }
+
+    [Fact]
+    public async Task TwoUploadsRunningMakeAThirdWait()
+    {
+        var store = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<UploadStore>(_app.Services);
+        using var a = store.TryBegin();
+        using var b = store.TryBegin();
+        var resp = await _http.SendAsync(Upload(new byte[] { 1 }, "a.sppx"));
+        Assert.Equal(HttpStatusCode.TooManyRequests, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task AFullStoreAnswers507()
+    {
+        var data = _data + "-full";
+        await using var app = ServeCommand.Build(new[] { "--urls", "http://127.0.0.1:0" }, Key, data,
+            s => Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddSingleton(s,
+                new UploadStore(Path.Combine(data, "uploads")) { MaxTotalBytes = 4 }));
+        await app.StartAsync();
+        try
+        {
+            using var http = new HttpClient { BaseAddress = new Uri(app.Urls.First()) };
+            Assert.Equal(HttpStatusCode.OK, (await http.SendAsync(Upload(new byte[] { 1, 2, 3 }, "a.sppx"))).StatusCode);
+            var resp = await http.SendAsync(Upload(new byte[] { 1, 2, 3 }, "b.sppx"));
+            Assert.Equal((HttpStatusCode)507, resp.StatusCode);
+            Assert.Contains("full", await resp.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            await app.StopAsync();
+            try { Directory.Delete(data, true); } catch { }
+        }
+    }
+
+    /** A container stopped mid-download or mid-unpack left a folder in tmp; nothing there belongs to a live call. */
+    [Fact]
+    public async Task TmpIsEmptiedAtStartup()
+    {
+        var data = _data + "-tmp";
+        var leftover = Path.Combine(data, "tmp", "0123", "post.sppx");
+        Directory.CreateDirectory(Path.GetDirectoryName(leftover)!);
+        File.WriteAllText(leftover, "x");
+        await using var app = ServeCommand.Build(new[] { "--urls", "http://127.0.0.1:0" }, Key, data);
+        Assert.Empty(Directory.GetFileSystemEntries(Path.Combine(data, "tmp")));
+        try { Directory.Delete(data, true); } catch { }
+    }
+
     [Fact]
     public async Task WithoutTheKeyIt401s()
     {

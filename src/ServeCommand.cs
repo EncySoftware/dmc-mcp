@@ -38,7 +38,7 @@ public static class ServeCommand
         return 0;
     }
 
-    internal static WebApplication Build(string[] args, string key, string dataDir)
+    internal static WebApplication Build(string[] args, string key, string dataDir, Action<IServiceCollection>? configure = null)
     {
         var builder = WebApplication.CreateBuilder(args);
         // The key may travel in the path: keep ASP.NET from logging request lines.
@@ -48,12 +48,16 @@ public static class ServeCommand
         builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = UploadBodyLimit);
 
         var uploads = new UploadStore(Path.Combine(dataDir, "uploads"));
+        var tmp = Path.Combine(dataDir, "tmp");
+        UploadJanitor.ClearTemp(tmp); // left by a container stopped mid-call; no call is alive yet
         builder.Services.AddSingleton(uploads);
-        builder.Services.AddSingleton(new FileInputs(true, uploads, new Downloader(), Path.Combine(dataDir, "tmp")));
+        builder.Services.AddSingleton(new FileInputs(true, uploads, new Downloader(), tmp));
         builder.Services.AddSingleton<IDmcClient, DmcClient>();
         builder.Services.AddSingleton<DmcTokenProvider>();
         builder.Services.AddSingleton<DmcTools>();
         builder.Services.AddHostedService<SignInKeepAlive>();
+        builder.Services.AddHostedService(sp => new UploadJanitor(sp.GetRequiredService<UploadStore>(), tmp));
+        configure?.Invoke(builder.Services); // tests replace DMC, the sign-in or the store
         builder.Services
             .AddMcpServer(o => o.ServerInstructions = Instructions)
             .WithHttpTransport()
@@ -76,6 +80,13 @@ public static class ServeCommand
         app.UseRouting();
         app.MapPost("/mcp/upload", async (HttpRequest req, UploadStore store, CancellationToken ct) =>
         {
+            // Before the body is read: ReadFormAsync buffers the file on the container's disk, then Save copies it.
+            using var slot = store.TryBegin();
+            if (slot == null)
+                return Results.Json(new { error = $"{UploadStore.MaxConcurrent} uploads are already running — send this one when they finish" },
+                    statusCode: StatusCodes.Status429TooManyRequests);
+            if (store.UsedBytes() >= store.MaxTotalBytes)
+                return Results.Json(new { error = store.Full().Message }, statusCode: StatusCodes.Status507InsufficientStorage);
             if (req.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
                 limit.MaxRequestBodySize = UploadBodyLimit;
             var noFile = Results.BadRequest(new { error = "send the file as multipart/form-data, field \"file\"" });
@@ -92,6 +103,10 @@ public static class ServeCommand
                 return Results.Ok(new { file = saved.Ref, name = saved.Name, size = saved.Size, expiresAt = saved.ExpiresAt });
             }
             catch (InvalidDataException e) { return Results.BadRequest(new { error = e.Message }); }
+            catch (UploadStore.FullException e)
+            {
+                return Results.Json(new { error = e.Message }, statusCode: StatusCodes.Status507InsufficientStorage);
+            }
         });
         app.MapMcp("/mcp");
         return app;

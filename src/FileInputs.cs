@@ -29,7 +29,8 @@ public sealed class FileInputs(bool hosted, UploadStore? uploads = null, Downloa
         public void Dispose()
         {
             if (_cleanup == null) return;
-            try { Directory.Delete(_cleanup, true); } catch { /* best effort: the OS temp cleaner takes the rest */ }
+            // Best effort: what stays is swept by UploadJanitor on the hosted server, by the OS temp cleaner at home.
+            try { Directory.Delete(_cleanup, true); } catch { }
         }
     }
 
