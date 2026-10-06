@@ -176,8 +176,18 @@ public class ServeTests : IAsyncLifetime
     public async Task AHugeJsonRpcBodyIsRefused()
     {
         var json = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"x\":\"" + new string('a', 31_000_000) + "\"}}";
-        var resp = await _http.SendAsync(Rpc("/mcp", json, null));
-        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, resp.StatusCode);
+        try
+        {
+            var resp = await _http.SendAsync(Rpc("/mcp", json, null));
+            Assert.Equal(HttpStatusCode.RequestEntityTooLarge, resp.StatusCode);
+        }
+        catch (HttpRequestException)
+        {
+            // On Linux Kestrel answers 413 and closes the connection while the client is still sending, so the
+            // client sees a reset instead of the status. That is a refusal too — as long as the server lives on.
+            var alive = await _http.SendAsync(Initialize("/mcp", Key));
+            Assert.Equal(HttpStatusCode.OK, alive.StatusCode);
+        }
     }
 
     [Fact]
