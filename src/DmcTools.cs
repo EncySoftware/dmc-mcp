@@ -301,7 +301,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens)
         [Description("Folder with components: post files (.sppx, .dll, .stnci, .zip) and subfolders — a schema (xml + osd) or a kit")] string dir,
         [Description("Path to the CSV manifest: columns file, name, description, controllerManufacturer, " +
                      "controllerSeries, controllerModel, machineManufacturer, machineSeries, machineModel, " +
-                     "machineType, numberOfAxes; only file is required")] string? manifest = null,
+                     "machineType, numberOfAxes, travelXMm, travelYMm, travelZMm; only file is required")] string? manifest = null,
         [Description("true (default) — AI fills in the description, cover and metadata; false — archive parsing only")] bool ai = true,
         [Description("AI hint for names — like \"Naming legend\" in the DMC account, e.g. \"M3X = 3-axis mill\"")] string? nameHint = null,
         [Description("AI hint for descriptions")] string? descriptionHint = null,

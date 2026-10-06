@@ -109,7 +109,7 @@ public static class BrowserLogin
         }
         if (redirectUri == null)
         {
-            write($"Could not listen on port {port} — run `sprutcam-extension-mcp login --password` instead.");
+            write($"Could not listen on port {port} — run `dmc-mcp login --password` instead.");
             return null;
         }
 
@@ -163,9 +163,9 @@ public static class BrowserLogin
         if (await Task.WhenAny(incoming, Task.Delay(Wait)) != incoming)
         {
             write("Gave up waiting for the browser.");
-            write("If the page refused the address as an invalid redirect URI, the store's Keycloak "
-                  + "client does not allow http://127.0.0.1 yet — run `sprutcam-extension-mcp login "
-                  + "--password` for now and ask the store team to allow it.");
+            write("If the page refused the address as an invalid redirect URI, the DMC Keycloak "
+                  + "client does not allow http://127.0.0.1 yet — run `dmc-mcp login --password` "
+                  + "for now and ask the DMC team to allow it.");
             return null;
         }
         return await incoming;
