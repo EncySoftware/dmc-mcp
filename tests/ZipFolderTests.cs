@@ -94,6 +94,17 @@ public class ZipFolderTests : IDisposable
         File.WriteAllBytes(path, bytes);
     }
 
+    /** A file and a folder of the same name cannot both be unpacked: an ERROR, and nothing left behind. */
+    [Fact]
+    public void AFileInTheWayOfAFolderIsAnErrorNotAnException()
+    {
+        var into = Path.Combine(_dir, "out");
+        var (dir, error) = ZipFolder.Extract(Zip("big.bin", "x", "x/y"), into);
+        Assert.Null(dir);
+        Assert.StartsWith("ERROR:", error);
+        Assert.False(Directory.Exists(into));
+    }
+
     [Fact]
     public void NotAZipIsReported()
     {

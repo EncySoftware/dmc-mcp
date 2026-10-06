@@ -48,8 +48,18 @@ public sealed class FileInputs(bool hosted, UploadStore? uploads = null, Downloa
         if (arg.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || arg.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
         {
             var dir = NewTemp();
-            var (path, error) = await _downloader.Fetch(arg, dir, ct);
-            return path == null ? Cleaned(error!, dir) : new Input(path, null, dir);
+            try
+            {
+                var (path, error) = await _downloader.Fetch(arg, dir, ct);
+                return path == null ? Cleaned(error!, dir) : new Input(path, null, dir);
+            }
+            catch (Exception e)
+            {
+                // Whatever the downloader did not foresee: the half-written file must not stay on the server's disk.
+                Cleaned("", dir);
+                if (e is OperationCanceledException && ct.IsCancellationRequested) throw;
+                return new Input(null, "ERROR: could not download the link — " + e.Message);
+            }
         }
         if (hosted) return new Input(null, HostedPathRefusal);
         var full = System.IO.Path.GetFullPath(arg);
@@ -71,8 +81,16 @@ public sealed class FileInputs(bool hosted, UploadStore? uploads = null, Downloa
         using var zip = await File(arg, ct);
         if (zip.Error != null) return new Input(null, zip.Error);
         var dir = NewTemp();
-        var (root, error) = ZipFolder.Extract(zip.Path!, dir);
-        return root == null ? Cleaned(error!, dir) : new Input(root, null, dir);
+        try
+        {
+            var (root, error) = ZipFolder.Extract(zip.Path!, dir);
+            return root == null ? Cleaned(error!, dir) : new Input(root, null, dir);
+        }
+        catch
+        {
+            Cleaned("", dir);
+            throw;
+        }
     }
 
     private string NewTemp()

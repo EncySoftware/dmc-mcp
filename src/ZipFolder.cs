@@ -75,5 +75,11 @@ public static class ZipFolder
             return (root, null);
         }
         catch (InvalidDataException) { return (null, "ERROR: the file is not a readable zip."); }
+        // A file and a folder of the same name, a name the file system refuses, a full disk: the zip's fault or
+        // the server's, the caller gets an ERROR either way — never an exception that leaves the folder behind.
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return (null, "ERROR: the zip could not be unpacked — " + e.Message);
+        }
     }
 }

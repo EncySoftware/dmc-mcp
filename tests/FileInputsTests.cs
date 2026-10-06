@@ -82,6 +82,36 @@ public class FileInputsTests : IDisposable
         Assert.False(Directory.Exists(folder));
     }
 
+    /** Whatever goes wrong while unpacking, the tool answers ERROR and the temp folder does not stay on the disk. */
+    [Fact]
+    public async Task AZipThatCannotBeUnpackedLeavesNothing()
+    {
+        var zip = Path.Combine(_dir, "bad.zip");
+        using (var z = ZipFile.Open(zip, ZipArchiveMode.Create))
+            foreach (var name in new[] { "big.bin", "x", "x/y" })
+                using (var w = new StreamWriter(z.CreateEntry(name).Open())) w.Write("x");
+        var saved = await Uploads().Save(File.OpenRead(zip), "bad.zip");
+        using var input = await Hosted().Folder(saved.Ref);
+        Assert.StartsWith("ERROR:", input.Error);
+        Assert.Empty(Directory.GetFileSystemEntries(Path.Combine(_dir, "tmp")));
+    }
+
+    /** A link that fails in a way the downloader did not expect still answers ERROR and leaves no temp folder. */
+    [Fact]
+    public async Task AFailedDownloadLeavesNothing()
+    {
+        var inputs = new FileInputs(true, Uploads(), new Downloader(new Throwing()), Path.Combine(_dir, "tmp"));
+        using var input = await inputs.File("https://files.example.com/post.sppx");
+        Assert.StartsWith("ERROR:", input.Error);
+        Assert.Empty(Directory.GetFileSystemEntries(Path.Combine(_dir, "tmp")));
+    }
+
+    private sealed class Throwing : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            throw new InvalidOperationException("something nobody expected");
+    }
+
     [Fact]
     public async Task HostedFolderPathIsRefused()
     {
