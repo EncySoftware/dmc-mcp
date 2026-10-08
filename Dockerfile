@@ -1,6 +1,6 @@
 # The hosted dmc-mcp (`dmc-mcp serve`): the dotnet tool exactly as published on nuget.org, on the ASP.NET Core
 # runtime. Nothing is compiled — the DMC VPS has two cores and its memory belongs to the backend.
-#   docker build --build-arg VERSION=0.8.0 -t dmc-mcp:0.8.0 https://github.com/EncySoftware/dmc-mcp.git#v0.8.0
+#   docker build --build-arg VERSION=0.9.0 -t dmc-mcp:0.9.0 https://github.com/EncySoftware/dmc-mcp.git#v0.9.0
 FROM alpine:3.20 AS package
 ARG VERSION
 RUN test -n "$VERSION" \
