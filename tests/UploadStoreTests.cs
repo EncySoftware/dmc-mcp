@@ -77,6 +77,63 @@ public class UploadStoreTests : IDisposable
         Assert.NotNull(c);
     }
 
+    // ------------------------------------------------------------- owners (0.9.0)
+
+    [Fact]
+    public async Task AnotherOwnersUploadIsNotFound()
+    {
+        var saved = await Store().Save(new MemoryStream(new byte[] { 1 }), "a.sppx", "user:aaa");
+        Assert.NotNull(Store().Resolve(saved.Ref, "user:aaa"));
+        Assert.Null(Store().Resolve(saved.Ref, "user:bbb"));
+        Assert.Null(Store().Resolve(saved.Ref, Caller.Server.Owner));
+    }
+
+    [Fact]
+    public async Task WithoutAnOwnerAnUploadIsTheKeys()
+    {
+        var saved = await Store().Save(new MemoryStream(new byte[] { 1 }), "a.sppx");
+        Assert.NotNull(Store().Resolve(saved.Ref));
+        Assert.NotNull(Store().Resolve(saved.Ref, Caller.Server.Owner));
+        Assert.Null(Store().Resolve(saved.Ref, "user:aaa"));
+    }
+
+    /** Uploads made by 0.8.0 carry no owner: they were all made with the key, so they stay the key's. */
+    [Fact]
+    public void AnUploadFromBeforeOwnersIsTheKeys()
+    {
+        const string id = "0123456789abcdef0123456789abcdef";
+        var dir = Path.Combine(_root, id);
+        Directory.CreateDirectory(dir);
+        File.WriteAllBytes(Path.Combine(dir, "a.sppx"), new byte[] { 1 });
+        File.WriteAllText(Path.Combine(dir, ".expires"), (_now + TimeSpan.FromHours(1)).ToUnixTimeSeconds().ToString());
+        Assert.NotNull(Store().Resolve("upload:" + id, Caller.Server.Owner));
+        Assert.Null(Store().Resolve("upload:" + id, "user:aaa"));
+    }
+
+    /** A file named like the store's own bookkeeping cannot overwrite it — nor be mistaken for it. */
+    [Theory]
+    [InlineData(".owner")]
+    [InlineData(".expires")]
+    [InlineData(".OWNER")]
+    public async Task AFileNamedLikeTheStoresOwnKeepsItsOwner(string name)
+    {
+        var saved = await Store().Save(new MemoryStream(new byte[] { 5, 6 }), name, "user:aaa");
+        var path = Store().Resolve(saved.Ref, "user:aaa");
+        Assert.NotNull(path);
+        Assert.Equal(new byte[] { 5, 6 }, File.ReadAllBytes(path!));
+        Assert.Null(Store().Resolve(saved.Ref, Caller.Server.Owner));
+        Assert.Null(Store().Resolve(saved.Ref, "user:bbb"));
+    }
+
+    /** The owner note is bookkeeping, not an upload: it does not count against the 5 GB. */
+    [Fact]
+    public async Task TheOwnerNoteIsNotCounted()
+    {
+        var store = Store();
+        await store.Save(new MemoryStream(new byte[] { 1, 2 }), "a.sppx", "user:aaa");
+        Assert.Equal(2, store.UsedBytes());
+    }
+
     [Fact]
     public async Task ReferenceIsCaseInsensitive()
     {
