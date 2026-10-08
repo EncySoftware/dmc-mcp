@@ -6,9 +6,12 @@ namespace DmcMcp;
 /// <summary>
 /// The trusted issuer's signing keys, found the way OIDC prescribes: &lt;issuer&gt;/.well-known/openid-configuration
 /// names the jwks_uri, and that names the keys. Fetched when the first token arrives and kept 12 hours, so no request
-/// waits on Keycloak after that; a refresh that fails keeps the keys in hand and is tried again a minute later. A
-/// token signed with a key that is not among them (the realm rotated its key) makes them be fetched again — at most
-/// once a minute, so tokens with invented key ids cannot make the server hammer Keycloak.
+/// waits on Keycloak after that: when they are due, the keys in hand go on checking tokens while the refresh runs in
+/// the background (they are the realm's until it publishes others). A token signed with a key that is not among them
+/// (the realm rotated its key) makes them be fetched again — at most once a minute, so tokens with invented key ids
+/// cannot make the server hammer Keycloak. One fetch at a time: whoever needs keys while one is under way waits for
+/// that one. After a failed fetch Keycloak is not asked again for a minute; until the keys were ever loaded, tokens in
+/// that minute are answered at once (<see cref="UnavailableException"/>, a 503 at the door).
 /// </summary>
 public class IssuerKeys
 {
@@ -22,9 +25,13 @@ public class IssuerKeys
     private readonly string _issuer;
     private readonly HttpClient _http;
     private readonly TimeProvider _clock;
-    private readonly SemaphoreSlim _fetching = new(1, 1);
+    private readonly object _lock = new();
     private volatile Snapshot? _keys;
+    /** The fetch under way, if any — whoever needs one meanwhile waits for this one; it gives null when it failed. */
+    private Task<Snapshot?>? _fetch;
+    /** No new attempt before this, after one failed. */
     private DateTimeOffset _retryAfter = DateTimeOffset.MinValue;
+    /** When a key id nobody knew last made the keys be fetched again. */
     private DateTimeOffset _lastRefetch = DateTimeOffset.MinValue;
 
     private sealed record Snapshot(IReadOnlyList<SecurityKey> Keys, string JwksUri, DateTimeOffset FetchedAt);
@@ -44,66 +51,90 @@ public class IssuerKeys
     /** Why the last fetch failed — for the log line; null when it did not. */
     public string? LastError { get; private set; }
 
+    /** The fetch under way, or a finished task when there is none: tests wait out a background refresh with it. */
+    internal Task Settled
+    {
+        get { lock (_lock) return _fetch ?? Task.CompletedTask; }
+    }
+
     /** The keys to check a token with. Throws <see cref="UnavailableException"/> when there are none to be had. */
     public async Task<IReadOnlyList<SecurityKey>> Current(CancellationToken ct = default)
     {
-        if (Fresh(_keys) is { } keys) return keys;
-        await _fetching.WaitAsync(ct);
-        try
+        if (_keys is { } snap)
         {
-            var snap = _keys;
-            if (Fresh(snap) is { } fetchedMeanwhile) return fetchedMeanwhile;
-            try
-            {
-                _keys = snap = await Fetch(snap?.JwksUri, discover: true, ct);
-                LastError = null;
-                return snap.Keys;
-            }
-            catch (Exception e) when (!(e is OperationCanceledException && ct.IsCancellationRequested))
-            {
-                LastError = e.Message;
-                _retryAfter = _clock.GetUtcNow() + AtMostEvery;
-                if (snap != null) return snap.Keys; // Keycloak is down for a moment: the keys in hand still hold
-                throw new UnavailableException($"the keys of {_issuer} could not be fetched: {e.Message}", e);
-            }
+            if (_clock.GetUtcNow() - snap.FetchedAt >= KeepFor) RefreshBehind();
+            return snap.Keys;
         }
-        finally { _fetching.Release(); }
+        Task<Snapshot?> fetch;
+        lock (_lock)
+        {
+            if (_keys is { } meanwhile) return meanwhile.Keys;
+            // The last attempt failed less than a minute ago: answer now, and leave Keycloak alone.
+            if (_fetch == null && _clock.GetUtcNow() < _retryAfter) throw Unavailable();
+            fetch = _fetch ?? Start(discover: true);
+        }
+        return (await fetch.WaitAsync(ct))?.Keys ?? throw Unavailable();
     }
 
     /**
      * A token names a key that is not among the current ones. The realm may have rotated its key: the key set is
-     * fetched again, unless that was already done in the last minute. Returns the keys to check the token with.
+     * fetched again — or the fetch under way is waited for — unless one was made, or failed, in the last minute.
+     * Returns the keys to check the token with.
      */
     public async Task<IReadOnlyList<SecurityKey>> AfterUnknownKey(CancellationToken ct = default)
     {
-        await _fetching.WaitAsync(ct);
-        try
+        Snapshot snap;
+        Task<Snapshot?> fetch;
+        lock (_lock)
         {
-            var snap = _keys;
-            if (snap == null) throw new UnavailableException($"the keys of {_issuer} are not loaded");
-            var now = _clock.GetUtcNow();
-            if (now - _lastRefetch < AtMostEvery) return snap.Keys;
-            _lastRefetch = now;
-            try
+            snap = _keys ?? throw new UnavailableException($"the keys of {_issuer} are not loaded");
+            if (_fetch != null) fetch = _fetch;
+            else
             {
-                _keys = snap = await Fetch(snap.JwksUri, discover: false, ct);
-                LastError = null;
+                var now = _clock.GetUtcNow();
+                if (now - _lastRefetch < AtMostEvery || now < _retryAfter) return snap.Keys;
+                _lastRefetch = now;
+                fetch = Start(discover: false);
             }
-            catch (Exception e) when (!(e is OperationCanceledException && ct.IsCancellationRequested))
-            {
-                LastError = e.Message;
-            }
-            return snap.Keys;
         }
-        finally { _fetching.Release(); }
+        return ((await fetch.WaitAsync(ct)) ?? _keys ?? snap).Keys;
     }
 
-    private IReadOnlyList<SecurityKey>? Fresh(Snapshot? snap)
+    /** The 12-hourly refresh, started and not waited for — unless one is under way or failed within the minute. */
+    private void RefreshBehind()
     {
-        if (snap == null) return null;
-        var now = _clock.GetUtcNow();
-        return now - snap.FetchedAt < KeepFor || now < _retryAfter ? snap.Keys : null;
+        lock (_lock)
+        {
+            if (_fetch == null && _clock.GetUtcNow() >= _retryAfter) Start(discover: true);
+        }
     }
+
+    /**
+     * Under the lock: the one fetch, off the caller's thread, so it cannot finish before it is recorded as under way.
+     * It records its own outcome — the keys, or the error and a minute's pause — and is never cancelled by a caller
+     * that stops waiting: others may be waiting for it too. The HttpClient's 15 seconds bound it.
+     */
+    private Task<Snapshot?> Start(bool discover)
+    {
+        var jwksUri = discover ? null : _keys?.JwksUri;
+        return _fetch = Task.Run(async () =>
+        {
+            try
+            {
+                var snap = await Fetch(jwksUri, discover: jwksUri == null, CancellationToken.None);
+                lock (_lock) { _keys = snap; LastError = null; _fetch = null; }
+                return snap;
+            }
+            catch (Exception e)
+            {
+                lock (_lock) { LastError = e.Message; _retryAfter = _clock.GetUtcNow() + AtMostEvery; _fetch = null; }
+                return null;
+            }
+        });
+    }
+
+    private UnavailableException Unavailable() =>
+        new($"the keys of {_issuer} could not be fetched: {LastError ?? "no answer"}");
 
     private async Task<Snapshot> Fetch(string? jwksUri, bool discover, CancellationToken ct)
     {

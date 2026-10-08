@@ -14,13 +14,19 @@ public sealed class TestIssuer : HttpMessageHandler
     public const string JwksUrl = Issuer + "/protocol/openid-connect/certs";
 
     private readonly List<(string Kid, RSA Key)> _published = new();
-    private int _discoveryFetches, _jwksFetches;
+    private int _discoveryFetches, _jwksFetches, _attempts;
 
     public int DiscoveryFetches => _discoveryFetches;
     public int JwksFetches => _jwksFetches;
 
+    /** Every request that reached the realm, answered or not: what an outage costs Keycloak. */
+    public int Attempts => _attempts;
+
     /** Keycloak unreachable: every request fails as a refused connection would. */
     public bool Down { get; set; }
+
+    /** Keycloak that hangs: while set, every request waits for it before it is answered (or fails, when Down). */
+    public TaskCompletionSource? Hold { get; set; }
 
     /** What discovery says its issuer is; null — the real one. */
     public string? DiscoveryIssuer { get; set; }
@@ -38,7 +44,14 @@ public sealed class TestIssuer : HttpMessageHandler
         return key;
     }
 
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        Interlocked.Increment(ref _attempts);
+        if (Hold is { } hold) await hold.Task.WaitAsync(ct);
+        return Answer(request);
+    }
+
+    private HttpResponseMessage Answer(HttpRequestMessage request)
     {
         if (Down) throw new HttpRequestException("Connection refused (keycloak.test:443)");
         var url = request.RequestUri!.ToString();
@@ -73,13 +86,13 @@ public sealed class TestIssuer : HttpMessageHandler
             });
             return Json(new Dictionary<string, object?> { ["keys"] = keys });
         }
-        return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        return new HttpResponseMessage(HttpStatusCode.NotFound);
     }
 
-    private static Task<HttpResponseMessage> Json(object body) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+    private static HttpResponseMessage Json(object body) => new(HttpStatusCode.OK)
     {
         Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json"),
-    });
+    };
 
     /**
      * A Keycloak access token for a person, signed RS256 with the realm's current key. edit changes the payload

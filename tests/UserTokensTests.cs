@@ -10,10 +10,11 @@ public class UserTokensTests
 {
     private readonly TestIssuer _realm = new();
     private readonly ManualClock _clock = new(DateTimeOffset.UtcNow);
+    private IssuerKeys? _keys;
 
     private UserTokens Tokens(string[]? clients = null, string[]? audiences = null) =>
         new(new TokenSettings(TestIssuer.Issuer, clients ?? Array.Empty<string>(), audiences ?? Array.Empty<string>()),
-            new IssuerKeys(TestIssuer.Issuer, _realm, _clock));
+            _keys = new IssuerKeys(TestIssuer.Issuer, _realm, _clock));
 
     private static long Now => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
@@ -204,6 +205,7 @@ public class UserTokensTests
         await tokens.Check(_realm.Token());
         _clock.Now += TimeSpan.FromHours(12) + TimeSpan.FromSeconds(1);
         Assert.NotNull((await tokens.Check(_realm.Token())).Caller);
+        await _keys!.Settled; // the refresh runs behind the token, which the keys in hand checked
         Assert.Equal(2, _realm.JwksFetches);
     }
 
