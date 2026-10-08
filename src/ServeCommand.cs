@@ -124,11 +124,16 @@ public static class ServeCommand
         // and only the upload endpoint raises it for its own request.
         builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = UploadBodyLimit);
 
-        var uploads = new UploadStore(Path.Combine(settings.DataDir, "uploads"));
         var tmp = Path.Combine(settings.DataDir, "tmp");
         UploadJanitor.ClearTemp(tmp); // left by a container stopped mid-call; no call is alive yet
-        builder.Services.AddSingleton(uploads);
-        builder.Services.AddSingleton(new FileInputs(true, uploads, new Downloader(), tmp));
+        builder.Services.AddSingleton(new UploadStore(Path.Combine(settings.DataDir, "uploads")));
+        builder.Services.AddSingleton(new Downloader());
+        // Who a person is in DMC, asked once a minute per token: by the disk gate before a file of theirs is kept, and
+        // by the tools' errors that name the account.
+        builder.Services.AddSingleton<Who>();
+        builder.Services.AddSingleton<DiskGate>();
+        builder.Services.AddSingleton(sp => new FileInputs(true, sp.GetRequiredService<UploadStore>(),
+            sp.GetRequiredService<Downloader>(), tmp, sp.GetRequiredService<DiskGate>()));
         builder.Services.AddSingleton<IDmcClient, DmcClient>();
         builder.Services.AddSingleton<DmcTokenProvider>();
         builder.Services.AddSingleton<DmcTools>();
@@ -171,15 +176,21 @@ public static class ServeCommand
             app.MapGet(Door.McpMetadataPath, () => Results.Json(metadata, typeInfo));
             app.MapGet(Door.MetadataPath, () => Results.Json(metadata, typeInfo));
         }
-        app.MapPost("/mcp/upload", async (HttpRequest req, UploadStore store, CancellationToken ct) =>
+        app.MapPost("/mcp/upload", async (HttpRequest req, UploadStore store, DiskGate gate, CancellationToken ct) =>
         {
-            // Before the body is read: ReadFormAsync buffers the file on the container's disk, then Save copies it.
-            using var slot = store.TryBegin();
-            if (slot == null)
-                return Results.Json(new { error = $"{UploadStore.MaxConcurrent} uploads are already running — send this one when they finish" },
-                    statusCode: StatusCodes.Status429TooManyRequests);
-            if (store.UsedBytes() >= store.MaxTotalBytes)
-                return Results.Json(new { error = store.Full().Message }, statusCode: StatusCodes.Status507InsufficientStorage);
+            // Whoever the door let in: the key's account, or the person whose token sent it — it owns the upload.
+            var caller = Caller.Current ?? Caller.Server;
+            // All before the body is read: ReadFormAsync buffers the file on the container's disk, then Save copies it.
+            // A person must be someone DMC lets publish — a licsys account alone buys no room here.
+            if (await gate.Check(caller) is { } refused)
+            {
+                if (refused.Status == StatusCodes.Status503ServiceUnavailable) req.HttpContext.Response.Headers.RetryAfter = "60";
+                return Results.Json(new { error = refused.Message }, statusCode: refused.Status);
+            }
+            using var slot = store.TryBegin(caller.Owner, out var busy);
+            if (slot == null) return Results.Json(new { error = busy }, statusCode: StatusCodes.Status429TooManyRequests);
+            if (store.NoRoomFor(caller.Owner) is { } full)
+                return Results.Json(new { error = full }, statusCode: StatusCodes.Status507InsufficientStorage);
             if (req.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
                 limit.MaxRequestBodySize = UploadBodyLimit;
             var noFile = Results.BadRequest(new { error = "send the file as multipart/form-data, field \"file\"" });
@@ -192,8 +203,7 @@ public static class ServeCommand
             try
             {
                 await using var stream = file.OpenReadStream();
-                // Whoever the door let in owns it: the key's account, or the person whose token sent it.
-                var saved = await store.Save(stream, file.FileName, (Caller.Current ?? Caller.Server).Owner, ct);
+                var saved = await store.Save(stream, file.FileName, caller.Owner, ct);
                 return Results.Ok(new { file = saved.Ref, name = saved.Name, size = saved.Size, expiresAt = saved.ExpiresAt });
             }
             catch (InvalidDataException e) { return Results.BadRequest(new { error = e.Message }); }

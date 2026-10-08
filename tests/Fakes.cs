@@ -154,13 +154,16 @@ public class FakeDmcClient : IDmcClient
     public MeInfo Who { get; set; } = new("tester", new[] { "USER", "DEALER" }, "acc-1", "Test Co");
     public DmcHttpException? FailMe { get; set; }
 
+    /** Who a token is, when a test has more than one person; Who answers for any other token. */
+    public Dictionary<string, MeInfo> People { get; } = new();
+
     public int MeCalls => TokensOf(nameof(Me)).Count();
 
     public Task<MeInfo> Me(string accessToken)
     {
         Saw(nameof(Me), accessToken);
         if (FailMe != null) throw FailMe;
-        return Task.FromResult(Who);
+        return Task.FromResult(People.GetValueOrDefault(accessToken) ?? Who);
     }
 
     /** A card with a full Raw — update_post builds the PUT from it. A post by default; contentType is for schemas. */

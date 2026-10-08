@@ -13,13 +13,16 @@ namespace DmcMcp;
 /// Every answer is text for a human; an error starts with "ERROR:", and no exception escapes.
 /// </summary>
 [McpServerToolType]
-public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? inputs = null)
+public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? inputs = null, Who? who = null)
 {
     /** Where file arguments come from: local paths at home; upload ids and links on the hosted server. */
     private readonly FileInputs _inputs = inputs ?? FileInputs.Local;
 
-    /** Who a person's token is in DMC, for the errors that name the account (Why); asked once a minute per token at most. */
-    private readonly Who _who = new(dmc);
+    /**
+     * Who a person's token is in DMC, for the errors that name the account (Why); asked once a minute per token at
+     * most. On the hosted server the same one the disk gate asks.
+     */
+    private readonly Who _who = who ?? new Who(dmc);
 
     /** Replaced in tests: a real sleep while polling is pointless there. */
     internal Func<TimeSpan, Task> Delay { get; set; } = Task.Delay;

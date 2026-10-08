@@ -134,6 +134,71 @@ public class UploadStoreTests : IDisposable
         Assert.Equal(2, store.UsedBytes());
     }
 
+    // ------------------------------------------------------------- shares (0.9.0)
+
+    private const string Anna = "user:anna";
+    private const string Boris = "user:boris";
+
+    /** Two uploads at a time in all, one of them a person's: one person cannot take both slots while the rest wait. */
+    [Fact]
+    public void APersonRunsOneUploadAtATime()
+    {
+        var store = Store();
+        var first = store.TryBegin(Anna, out var none);
+        Assert.NotNull(first);
+        Assert.Null(none);
+        Assert.Null(store.TryBegin(Anna, out var mine));
+        Assert.Contains("you already have an upload running", mine);
+        using var boris = store.TryBegin(Boris, out _);
+        Assert.NotNull(boris);
+        Assert.Null(store.TryBegin("user:carol", out var everyone));
+        Assert.Contains("2 uploads are already running", everyone);
+        first!.Dispose();
+        using var again = store.TryBegin(Anna, out _);
+        Assert.NotNull(again);
+    }
+
+    /** The key is the operator's own: as in 0.8.0 it may run both uploads itself. */
+    [Fact]
+    public void TheKeyMayRunBothUploads()
+    {
+        var store = Store();
+        using var a = store.TryBegin(Caller.Server.Owner, out _);
+        using var b = store.TryBegin(Caller.Server.Owner, out _);
+        Assert.NotNull(a);
+        Assert.NotNull(b);
+    }
+
+    /** A person's uploads count against a share of their own as well as the total: nobody fills the store for everyone. */
+    [Fact]
+    public async Task APersonHasAShareOfTheStore()
+    {
+        var store = new UploadStore(_root, () => _now) { MaxTotalBytes = 100, MaxBytesPerPerson = 10 };
+        await store.Save(new MemoryStream(new byte[8]), "a.sppx", Anna);
+        Assert.Equal(8, store.UsedBytes(Anna));
+        var over = await Assert.ThrowsAsync<UploadStore.FullException>(() => store.Save(new MemoryStream(new byte[8]), "b.sppx", Anna));
+        Assert.Contains("your share", over.Message);
+        Assert.Single(Directory.GetDirectories(_root)); // nothing of the refused file stays
+        await store.Save(new MemoryStream(new byte[8]), "c.sppx", Boris);
+        await store.Save(new MemoryStream(new byte[20]), "d.sppx"); // the key: the total alone
+        Assert.Equal(0, store.UsedBytes("user:carol"));
+        Assert.Equal(36, store.UsedBytes());
+    }
+
+    /** Before the body is read: is there room for this sender at all — in the store, and in their share. */
+    [Fact]
+    public async Task NoRoomIsSaidBeforeTheBodyIsRead()
+    {
+        var store = new UploadStore(_root, () => _now) { MaxTotalBytes = 100, MaxBytesPerPerson = 10 };
+        Assert.Null(store.NoRoomFor(Anna));
+        await store.Save(new MemoryStream(new byte[10]), "a.sppx", Anna);
+        Assert.Contains("your share", store.NoRoomFor(Anna));
+        Assert.Null(store.NoRoomFor(Boris));
+        Assert.Null(store.NoRoomFor(Caller.Server.Owner));
+        _now += UploadStore.Lifetime + TimeSpan.FromSeconds(1);
+        Assert.Null(store.NoRoomFor(Anna)); // an expired upload gives its room back
+    }
+
     [Fact]
     public async Task ReferenceIsCaseInsensitive()
     {

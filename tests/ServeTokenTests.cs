@@ -42,10 +42,14 @@ public class ServeTokenTests : IAsyncLifetime
         new(TestIssuer.Issuer, clients ?? (audiences == null ? new[] { "hermes" } : Array.Empty<string>()),
             audiences ?? Array.Empty<string>());
 
-    private Task<HttpClient> Start(FakeDmcClient dmc, TokenSettings? tokens = null, bool tokensOff = false) =>
-        Start(dmc, new ServeSettings(Key, Path.Combine(_data, _apps.Count.ToString()), tokensOff ? null : tokens ?? Realm(), PublicUrl));
+    private Task<HttpClient> Start(FakeDmcClient dmc, TokenSettings? tokens = null, bool tokensOff = false,
+        Downloader? links = null, Func<string, UploadStore>? uploads = null) =>
+        Start(dmc, new ServeSettings(Key, Path.Combine(_data, _apps.Count.ToString()), tokensOff ? null : tokens ?? Realm(), PublicUrl),
+            links, uploads);
 
-    private async Task<HttpClient> Start(FakeDmcClient dmc, ServeSettings settings)
+    /** links: the downloader https:// arguments go through (a fake file server); uploads: the store, made for the data folder. */
+    private async Task<HttpClient> Start(FakeDmcClient dmc, ServeSettings settings, Downloader? links = null,
+        Func<string, UploadStore>? uploads = null)
     {
         var app = ServeCommand.Build(new[] { "--urls", "http://127.0.0.1:0" }, settings, s =>
         {
@@ -54,10 +58,22 @@ public class ServeTokenTests : IAsyncLifetime
             s.AddSingleton(new IssuerKeys(TestIssuer.Issuer, _realm));
             s.AddSingleton<ILoggerProvider>(_logs);
             s.Configure<LoggerFilterOptions>(o => o.MinLevel = LogLevel.Trace);
+            if (links != null) s.AddSingleton(links);
+            if (uploads != null) s.AddSingleton(uploads(Path.Combine(settings.DataDir, "uploads")));
         });
         _apps.Add(app);
+        _lastData = settings.DataDir;
         await app.StartAsync();
         return new HttpClient { BaseAddress = new Uri(app.Urls.First()) };
+    }
+
+    private string _lastData = "";
+
+    /** What the last server started keeps in its upload store. */
+    private string[] Stored()
+    {
+        var dir = Path.Combine(_lastData, "uploads");
+        return Directory.Exists(dir) ? Directory.GetFiles(dir, "*", SearchOption.AllDirectories) : Array.Empty<string>();
     }
 
     private static HttpRequestMessage Rpc(string body, string? bearer, string path = "/mcp")
@@ -101,6 +117,25 @@ public class ServeTokenTests : IAsyncLifetime
     }
 
     private static string Challenge(HttpResponseMessage resp) => string.Join(", ", resp.Headers.WwwAuthenticate.Select(h => h.ToString()));
+
+    private const string Link = "https://files.example.com/post.sppx";
+
+    /** A file server for links: answers three bytes and counts the downloads asked of it. */
+    private sealed class Files : HttpMessageHandler
+    {
+        private int _calls;
+        public int Calls => _calls;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Interlocked.Increment(ref _calls);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(new byte[] { 1, 2, 3 }),
+                RequestMessage = request,
+            });
+        }
+    }
 
     // ------------------------------------------------------------------ the key, as in 0.8.0
 
@@ -341,6 +376,101 @@ public class ServeTokenTests : IAsyncLifetime
         Assert.Equal(new[] { ServerToken }, dmc.TokensOf("StartImport"));
     }
 
+    // ------------------------------------------------------------------ the server's own disk
+
+    private static MeInfo Customer(string name) => new(name, new[] { "USER" }, "acc-" + name, null);
+
+    /** A licsys account alone buys no room on this server: someone DMC does not let publish has nothing stored. */
+    [Fact]
+    public async Task ANonPublishersUploadIsRefused()
+    {
+        var dmc = new FakeDmcClient { Who = Customer("anna@example.com") };
+        var http = await Start(dmc);
+        var anna = _realm.Token(sub: "sub-anna", name: "anna@example.com");
+        var resp = await http.SendAsync(Upload(anna));
+        var body = await resp.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.Forbidden, resp.StatusCode);
+        Assert.Contains("anna@example.com", body);
+        Assert.Contains("not a Publisher", body);
+        Assert.Empty(Stored());
+        Assert.Contains(anna, dmc.TokensOf("Me"));
+    }
+
+    /** DMC does not say who someone is: nothing is stored on a guess, and the answer says to try again. */
+    [Fact]
+    public async Task AnUploadWhoseSenderDmcCannotConfirmIs503()
+    {
+        var http = await Start(new FakeDmcClient { FailMe = new DmcHttpException(502, "") });
+        var resp = await http.SendAsync(Upload(_realm.Token()));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, resp.StatusCode);
+        Assert.NotNull(resp.Headers.RetryAfter);
+        Assert.Empty(Stored());
+    }
+
+    /** inspect_archive asks DMC nothing itself — the gate is what stands between someone's link and this disk. */
+    [Fact]
+    public async Task ANonPublishersLinkIsNotFetched()
+    {
+        var files = new Files();
+        var http = await Start(new FakeDmcClient { Who = Customer("anna@example.com") }, links: new Downloader(files));
+        var anna = _realm.Token(sub: "sub-anna", name: "anna@example.com");
+        var body = await (await http.SendAsync(Call("inspect_archive", new { file = Link }, anna))).Content.ReadAsStringAsync();
+        Assert.Contains("not a Publisher", body);
+        Assert.Equal(0, files.Calls);
+    }
+
+    [Fact]
+    public async Task APublishersLinkIsFetched()
+    {
+        var files = new Files();
+        var http = await Start(Publishing(), links: new Downloader(files));
+        var body = await (await http.SendAsync(Call("inspect_archive", new { file = Link }, _realm.Token()))).Content.ReadAsStringAsync();
+        Assert.DoesNotContain("not a Publisher", body);
+        Assert.Equal(1, files.Calls);
+    }
+
+    /** The key is the operator's own: DMC is not asked who it is before its files, as in 0.8.0. */
+    [Fact]
+    public async Task TheKeysFilesNeedNoRoleCheck()
+    {
+        var files = new Files();
+        var dmc = new FakeDmcClient { Who = Customer("hermes") };
+        var http = await Start(dmc, links: new Downloader(files));
+        Assert.Equal(HttpStatusCode.OK, (await http.SendAsync(Upload(Key))).StatusCode);
+        await http.SendAsync(Call("inspect_archive", new { file = Link }, Key));
+        Assert.Equal(1, files.Calls);
+        Assert.All(dmc.TokensOf("Me"), t => Assert.Equal(ServerToken, t)); // only the sign-in's own check at startup
+    }
+
+    /** Two upload slots in all and one per person: one person cannot hold both while everyone else waits. */
+    [Fact]
+    public async Task OnePersonHoldsOneUploadSlotAtMost()
+    {
+        var http = await Start(Publishing());
+        var annas = Caller.Person("any", "anna", TestIssuer.Issuer, "sub-anna").Owner;
+        using var running = _apps[^1].Services.GetRequiredService<UploadStore>().TryBegin(annas, out _);
+        Assert.NotNull(running);
+        var second = await http.SendAsync(Upload(_realm.Token(sub: "sub-anna")));
+        Assert.Equal(HttpStatusCode.TooManyRequests, second.StatusCode);
+        Assert.Contains("you already have an upload running", await second.Content.ReadAsStringAsync());
+        var boris = await http.SendAsync(Upload(_realm.Token(sub: "sub-boris", name: "boris@example.com")));
+        Assert.Equal(HttpStatusCode.OK, boris.StatusCode);
+    }
+
+    /** Each person's uploads have a share of the store: one person cannot fill it for everyone for a day. */
+    [Fact]
+    public async Task OnePersonCannotFillTheStore()
+    {
+        var http = await Start(Publishing(), uploads: dir => new UploadStore(dir) { MaxBytesPerPerson = 4 });
+        var anna = _realm.Token(sub: "sub-anna");
+        Assert.Equal(HttpStatusCode.OK, (await http.SendAsync(Upload(anna))).StatusCode); // 3 bytes of anna's 4
+        var over = await http.SendAsync(Upload(anna));
+        Assert.Equal((HttpStatusCode)507, over.StatusCode);
+        Assert.Contains("your share", await over.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.OK, (await http.SendAsync(Upload(_realm.Token(sub: "sub-boris", name: "boris@example.com")))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await http.SendAsync(Upload(Key))).StatusCode);
+    }
+
     // ------------------------------------------------------------------ discovery
 
     [Theory]
@@ -469,12 +599,15 @@ public class ServeTokenTests : IAsyncLifetime
         var dmc = Publishing();
         dmc.FailStatus = new DmcHttpException(403, """{"error":"Publisher role required"}""");
         dmc.Who = new MeInfo("anna@example.com", new[] { "USER" }, "acc-anna", null);
-        var http = await Start(dmc);
+        var boris = _realm.Token(sub: "sub-boris", name: "boris@example.com");
+        dmc.People[boris] = new MeInfo("boris@example.com", new[] { "USER", "DEALER" }, "acc-boris", null);
+        var http = await Start(dmc, links: new Downloader(new Files()));
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var anna = _realm.Token(sub: "sub-anna");
         var tokens = new[]
         {
             anna,
+            boris,
             _realm.Token(edit: c => c["exp"] = now - 600),
             _realm.Token(edit: c => c["typ"] = "ID"),
             _realm.Unsigned(),
@@ -483,8 +616,11 @@ public class ServeTokenTests : IAsyncLifetime
         foreach (var t in tokens) await http.SendAsync(Initialize(t));
         await http.SendAsync(Call("list_my_posts", new { }, anna));
         await http.SendAsync(Call("submit_post", new { id = "p1" }, anna)); // DMC answers 403, the error names the account
-        var reference = await UploadRef(http, anna);
-        await http.SendAsync(Call("publish_post", new { file = reference, force = true }, anna));
+        await http.SendAsync(Upload(anna));                                   // anna is no Publisher: refused at the disk
+        await http.SendAsync(Call("inspect_archive", new { file = Link }, anna));
+        var reference = await UploadRef(http, boris);
+        await http.SendAsync(Call("publish_post", new { file = reference, force = true }, boris));
+        await http.SendAsync(Call("inspect_archive", new { file = Link }, boris));
         await http.GetAsync("/.well-known/oauth-protected-resource/mcp");
 
         // The capture does see the door and the tools: a refusal is logged — by its reason.

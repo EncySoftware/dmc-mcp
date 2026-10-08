@@ -90,8 +90,8 @@ public class HostedToolsTests : IDisposable
         var tools = new DmcTools(new FakeDmcClient(), new FakeTokens("tok"),
             new FileInputs(true, Uploads(), new Downloader(new Silent()), tmp));
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => tools.PublishPost("https://files.example.com/post.sppx", force: true, cancellationToken: cts.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => As(Caller.Server,
+            () => tools.PublishPost("https://files.example.com/post.sppx", force: true, cancellationToken: cts.Token)));
         Assert.Empty(Directory.GetFileSystemEntries(tmp));
     }
 
@@ -102,8 +102,8 @@ public class HostedToolsTests : IDisposable
         var tools = new DmcTools(new FakeDmcClient(), new FakeTokens("tok"),
             new FileInputs(true, Uploads(), new Downloader(new Silent()), tmp));
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => tools.PublishFolder("https://files.example.com/posts.zip", dryRun: true, cancellationToken: cts.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => As(Caller.Server,
+            () => tools.PublishFolder("https://files.example.com/posts.zip", dryRun: true, cancellationToken: cts.Token)));
         Assert.Empty(Directory.GetFileSystemEntries(tmp));
     }
 

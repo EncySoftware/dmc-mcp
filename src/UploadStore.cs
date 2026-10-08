@@ -8,20 +8,26 @@ namespace DmcMcp;
 /// reference may contain, so it can never name a folder outside the store. The disk is the DMC server's, shared
 /// with the backend and its database: at most 1 GB a file, 5 GB in all, and two uploads at a time. An upload is
 /// its sender's: the key's account, or the person whose token sent it (<see cref="Caller.Owner"/>, kept in .owner);
-/// to anyone else its id resolves to nothing, exactly like an id that never existed.
+/// to anyone else its id resolves to nothing, exactly like an id that never existed. A person also has a share — one
+/// upload at a time and 2 GB of their own — so that nobody holds both slots or fills the store for everyone; the
+/// key's account, the operator's own, is bound by the totals alone, as in 0.8.0.
 /// </summary>
 public sealed class UploadStore(string root, Func<DateTimeOffset>? clock = null)
 {
     public const long MaxBytes = 1024L * 1024 * 1024;
     public const int MaxConcurrent = 2;
+    public const int MaxConcurrentPerPerson = 1;
     public static readonly TimeSpan Lifetime = TimeSpan.FromHours(24);
     private const string ExpiresFile = ".expires";
     private const string OwnerFile = ".owner";
     private readonly Func<DateTimeOffset> _now = clock ?? (() => DateTimeOffset.UtcNow);
-    private readonly SemaphoreSlim _slots = new(MaxConcurrent, MaxConcurrent);
+    private readonly Slots _slots = new(MaxConcurrent, MaxConcurrentPerPerson);
 
     /** Everything the store may hold at once, unexpired uploads together. */
     public long MaxTotalBytes { get; init; } = 5L * 1024 * 1024 * 1024;
+
+    /** What one person's unexpired uploads may come to together; the key's account is bound by MaxTotalBytes alone. */
+    public long MaxBytesPerPerson { get; init; } = 2L * 1024 * 1024 * 1024;
 
     /** The store is full: nothing more until uploads expire. The endpoint answers 507. */
     public sealed class FullException(string message) : IOException(message);
@@ -31,13 +37,20 @@ public sealed class UploadStore(string root, Func<DateTimeOffset>? clock = null)
         public string Ref => "upload:" + Id;
     }
 
-    /** A slot for one upload in progress — dispose it when done — or null when MaxConcurrent already run. */
-    public IDisposable? TryBegin() => _slots.Wait(0) ? new Slot(_slots) : null;
+    /** A slot for one of the key's uploads in progress — dispose it when done — or null when MaxConcurrent already run. */
+    public IDisposable? TryBegin() => TryBegin(Caller.Server.Owner, out _);
 
-    private sealed class Slot(SemaphoreSlim slots) : IDisposable
+    /** A slot for owner's upload — dispose it when done — or null, and why (the 429's message). */
+    public IDisposable? TryBegin(string owner, out string? busy)
     {
-        private int _released;
-        public void Dispose() { if (Interlocked.Exchange(ref _released, 1) == 0) slots.Release(); }
+        var slot = _slots.TryTake(owner, out var full);
+        busy = full switch
+        {
+            Slots.Full.Mine => "you already have an upload running on this server — send this one when it has finished",
+            Slots.Full.Everyone => $"{MaxConcurrent} uploads are already running — send this one when they finish",
+            _ => null,
+        };
+        return slot;
     }
 
     /** The uploaded files' bytes now, expired ones not yet purged included. */
@@ -51,9 +64,50 @@ public sealed class UploadStore(string root, Func<DateTimeOffset>? clock = null)
         return total;
     }
 
+    /** One owner's uploaded bytes now, expired ones not yet purged included. */
+    public long UsedBytes(string owner)
+    {
+        if (!Directory.Exists(root)) return 0;
+        long total = 0;
+        foreach (var dir in Directory.GetDirectories(root))
+        {
+            if (!OwnedBy(dir, owner)) continue;
+            try
+            {
+                foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+                    if (!IsBookkeeping(Path.GetFileName(f)))
+                        try { total += new FileInfo(f).Length; } catch (IOException) { /* deleted meanwhile */ }
+            }
+            catch (IOException) { /* purged meanwhile */ }
+            catch (UnauthorizedAccessException) { }
+        }
+        return total;
+    }
+
+    /** Before an upload's body is read: the 507's message when there is no room left for this owner, else null. */
+    public string? NoRoomFor(string owner)
+    {
+        Purge(); // an expired upload gives its room back
+        var (room, full) = RoomFor(owner);
+        return room > 0 ? null : full.Message;
+    }
+
+    /** The room left for owner — the store's, or a person's share when that is less — and what to say when it runs out. */
+    private (long Room, FullException Full) RoomFor(string owner)
+    {
+        var everyone = MaxTotalBytes - UsedBytes();
+        if (owner == Caller.Server.Owner) return (everyone, Full());
+        var mine = MaxBytesPerPerson - UsedBytes(owner);
+        return mine < everyone ? (mine, ShareFull()) : (everyone, Full());
+    }
+
     internal FullException Full() => new(
         $"the server's upload space is full ({MaxTotalBytes / (1024 * 1024)} MB of uploads from the last 24 hours) — "
         + "pass an https:// link instead, use an upload:<id> already made, or try again later");
+
+    private FullException ShareFull() => new(
+        $"your share of the server's upload space is used up ({MaxBytesPerPerson / (1024 * 1024)} MB of your uploads from "
+        + "the last 24 hours) — pass an https:// link instead, use an upload:<id> already made, or try again later");
 
     /** The store's own notes beside each upload; an uploaded file never takes one of these names. */
     private static bool IsBookkeeping(string fileName) =>
@@ -67,8 +121,8 @@ public sealed class UploadStore(string root, Func<DateTimeOffset>? clock = null)
     public async Task<Saved> Save(Stream content, string fileName, string owner, CancellationToken ct = default)
     {
         Purge();
-        var room = MaxTotalBytes - UsedBytes();
-        if (room <= 0) throw Full();
+        var (room, full) = RoomFor(owner);
+        if (room <= 0) throw full;
         var id = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
         var name = FileNames.Safe(fileName);
         if (IsBookkeeping(name)) name = "_" + name; // a file called .owner must not overwrite the owner
@@ -87,7 +141,7 @@ public sealed class UploadStore(string root, Func<DateTimeOffset>? clock = null)
                 {
                     size += n;
                     if (size > MaxBytes) throw new InvalidDataException("the file is larger than 1 GB");
-                    if (size > room) throw Full();
+                    if (size > room) throw full;
                     await dst.WriteAsync(buf.AsMemory(0, n), ct);
                 }
             }
