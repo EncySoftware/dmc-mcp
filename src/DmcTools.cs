@@ -910,8 +910,35 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: could not upload the file to DMC: " + e.Message; }
 
-        var putErr = await PutRaw(p, "imageUrl", staged, token);
-        return putErr ?? $"Cover of \"{p.Name}\" replaced with {Path.GetFileName(path)}.\nLink: {p.Url(dmc.Site)}";
+        var body = DmcJson.RequestFrom(p.Raw);
+        body["imageUrl"] = staged;
+        body["images"] = GalleryWithCover(staged, p.Raw);
+        try { await dmc.UpdateProduct(p.Id, body, token); }
+        catch (DmcHttpException e) { return await Why(e); }
+        catch (Exception e) { return "ERROR: DMC did not respond: " + e.Message; }
+        return $"Cover of \"{p.Name}\" replaced with {Path.GetFileName(path)}.\nLink: {p.Url(dmc.Site)}";
+    }
+
+    /**
+     * DMC's product form lists the gallery and calls its first picture the cover, so a cover put on the card alone
+     * showed there as an old picture (a Fanuc logo, 8 October). The new cover leads; the picture it replaces stays in
+     * the gallery, as DMC's own cover sources keep it; then the rest, each once.
+     */
+    internal static List<string> GalleryWithCover(string cover, JsonElement product)
+    {
+        var gallery = new List<string> { cover };
+        void Add(string? picture)
+        {
+            if (!string.IsNullOrWhiteSpace(picture) && !gallery.Contains(picture)) gallery.Add(picture);
+        }
+        if (product.ValueKind == JsonValueKind.Object)
+        {
+            if (product.TryGetProperty("imageUrl", out var old) && old.ValueKind == JsonValueKind.String) Add(old.GetString());
+            if (product.TryGetProperty("images", out var images) && images.ValueKind == JsonValueKind.Array)
+                foreach (var picture in images.EnumerateArray())
+                    if (picture.ValueKind == JsonValueKind.String) Add(picture.GetString());
+        }
+        return gallery;
     }
 
     // ---------------------------------------------------- readiness and similar ones

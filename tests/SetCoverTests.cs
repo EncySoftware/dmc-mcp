@@ -38,6 +38,33 @@ public class SetCoverTests : IDisposable
         Assert.Empty(dmc.AiCalls);
     }
 
+    /**
+     * DMC's product form lists the gallery and calls its first picture the cover. set_cover used to change only
+     * imageUrl, so the form showed an old picture as the cover and not the new one (a Fanuc logo, 8 October). The new
+     * cover leads the gallery now; the one it replaces stays in it, then the rest, each once.
+     */
+    [Fact]
+    public async Task TheNewCoverLeadsTheGalleryAndTheOldOneStaysInIt()
+    {
+        var dmc = new FakeDmcClient();
+        var raw = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+        {
+            ["id"] = "p1", ["slug"] = "fanuc-0i", ["name"] = "Fanuc 0i", ["contentType"] = "INTERPRETER",
+            ["category"] = "CNC_MACHINES", ["publicationStatus"] = "PUBLISHED", ["productFile"] = "products/p1/i.zip",
+            ["imageUrl"] = "products/p1/cover/old.png",
+            ["images"] = new[] { "products/p1/cover/side.png", "products/p1/cover/old.png" },
+        });
+        dmc.Products["p1"] = DmcJson.Product(raw);
+
+        await Tools(dmc).SetCover("p1", _png);
+
+        var (_, body) = Assert.Single(dmc.Puts);
+        var cover = "tmp/u1/" + Path.GetFileName(_png);
+        Assert.Equal(cover, body["imageUrl"]);
+        Assert.Equal(new[] { cover, "products/p1/cover/old.png", "products/p1/cover/side.png" },
+            Assert.IsAssignableFrom<IEnumerable<string>>(body["images"]).ToArray());
+    }
+
     [Fact]
     public async Task RefusesANonImage()
     {
