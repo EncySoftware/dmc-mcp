@@ -100,7 +100,17 @@ public static class ServeCommand
     {
         // Taken before the run: RunAsync disposes the services when it returns.
         var background = app.Services.GetServices<IHostedService>().OfType<BackgroundService>().ToList();
-        await app.RunAsync();
+        try
+        {
+            await app.RunAsync();
+        }
+        catch (Exception e) when (background.Any(s => s.ExecuteTask is { IsFaulted: true }))
+        {
+            // A service that faults before the host has finished starting can fail the start itself, and RunAsync
+            // then throws instead of returning: the same crash, the same exit code.
+            Console.Error.WriteLine("ERROR: a background service failed while the server started: " + e.Message);
+            return 1;
+        }
         return background.Any(s => s.ExecuteTask is { IsFaulted: true }) ? 1 : 0;
     }
 

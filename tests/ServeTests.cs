@@ -139,6 +139,21 @@ public class ServeTests : IAsyncLifetime
         try { Directory.Delete(data, true); } catch { }
     }
 
+    /**
+     * The same crash before the host has finished starting: the faulted task fails the start itself and
+     * RunAsync throws instead of returning. Crashing above lands here by chance when its continuation runs
+     * before the host looks (the 0.9.0 tag's CI run); this one lands here every time.
+     */
+    [Fact]
+    public async Task AServiceThatFailsWhileTheHostStartsIsANonZeroExitToo()
+    {
+        var data = _data + "-crash-at-start";
+        await using var app = ServeCommand.Build(new[] { "--urls", "http://127.0.0.1:0" }, Key, data,
+            s => Microsoft.Extensions.DependencyInjection.ServiceCollectionHostedServiceExtensions.AddHostedService<CrashingAtStart>(s));
+        Assert.Equal(1, await ServeCommand.RunUntilStopped(app));
+        try { Directory.Delete(data, true); } catch { }
+    }
+
     [Fact]
     public async Task AnOrderlyStopIsExitCodeZero()
     {
@@ -151,11 +166,24 @@ public class ServeTests : IAsyncLifetime
         try { Directory.Delete(data, true); } catch { }
     }
 
-    private sealed class Crashing : Microsoft.Extensions.Hosting.BackgroundService
+    private sealed class CrashingAtStart : Microsoft.Extensions.Hosting.BackgroundService
+    {
+        protected override Task ExecuteAsync(CancellationToken stop) =>
+            Task.FromException(new InvalidOperationException("crash at start"));
+    }
+
+    /**
+     * Crashes once the host is up — the case the test is about, a crash in a running server. It used to throw
+     * right after a Task.Yield, which raced the host's own start: the 0.9.0 tag's CI run lost that race.
+     */
+    private sealed class Crashing(Microsoft.Extensions.Hosting.IHostApplicationLifetime lifetime)
+        : Microsoft.Extensions.Hosting.BackgroundService
     {
         protected override async Task ExecuteAsync(CancellationToken stop)
         {
-            await Task.Yield();
+            var started = new TaskCompletionSource();
+            using (lifetime.ApplicationStarted.Register(() => started.TrySetResult()))
+                await started.Task;
             throw new InvalidOperationException("crash");
         }
     }

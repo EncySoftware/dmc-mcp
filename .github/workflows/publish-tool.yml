@@ -48,7 +48,7 @@ jobs:
           echo "publishing version $v"
 
       - name: Test
-        run: dotnet test tests/DmcMcp.Tests.csproj -v q --nologo
+        run: dotnet test tests/DmcMcp.Tests.csproj -v q --nologo --logger "console;verbosity=normal"
 
       - name: Pack
         run: dotnet pack src -c Release -o pkg -p:Version=${{ steps.ver.outputs.version }}

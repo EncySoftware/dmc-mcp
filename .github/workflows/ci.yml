@@ -20,4 +20,4 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - run: dotnet test tests/DmcMcp.Tests.csproj -c Release --nologo
+      - run: dotnet test tests/DmcMcp.Tests.csproj -c Release --nologo --logger "console;verbosity=normal"
