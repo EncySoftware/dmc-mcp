@@ -134,7 +134,9 @@ Everything that ties the tool to DMC lives in one file — `src/Brand.cs`.
   `https://dmc.encycam.com/mcp/<key>` for clients that take a URL only.
 - **Files:** the server cannot read paths. Upload first and pass the returned `upload:<id>` (24 hours; at most
   1 GB a file, 5 GB in all, two uploads at a time), or pass an https link. `publish_folder` takes the folder as a zip.
-  An upload is usable only by whoever sent it: the person whose token sent it, or the key's account.
+  An upload is usable only by whoever sent it: the person whose token sent it, or the key's account. For a person
+  the server keeps files only if DMC lets them publish, and then a share: one upload at a time and 2 GB of their own,
+  one link download or unpacking at a time.
 
       curl -H "Authorization: Bearer <token or key>" -F file=@post.sppx https://dmc.encycam.com/mcp/upload
       {"file":"upload:3f0c…","name":"post.sppx","size":51234,"expiresAt":"…"}
@@ -149,8 +151,13 @@ itself and sends that person's access token instead of the key.
 administrator:
 
 - OpenID Connect, standard flow (authorization code) with PKCE, method S256; direct access grants off;
+- client authentication on (a confidential client): then only the agent, with its secret, can turn a sign-in into a
+  token for its client;
 - valid redirect URI: the agent's own callback;
 - scope `openid` (and `offline_access` if the agent keeps people signed in for long).
+
+The client's id goes to the server's operator for `DMC_MCP_CLIENTS`: tokens are taken only from the clients named
+there (or for an audience named in `DMC_MCP_AUDIENCE`), and with neither set, not at all.
 
 Then, for each person: authorization code + PKCE against `https://webservices.encycam.com/keycloak/realms/licsys`,
 and on every request to `/mcp` and `/mcp/upload` that person's **access token** as `Authorization: Bearer <token>` —
@@ -163,41 +170,46 @@ MCP clients that discover the sign-in themselves (MCP authorization, RFC 9728) f
 `WWW-Authenticate` names `https://dmc.encycam.com/.well-known/oauth-protected-resource/mcp`, which names the realm.
 
 **Each person** needs a `licsys` account (encycam.com), one sign-in at https://dmc.encycam.com (that creates them in
-DMC), and the Publisher role, granted by a DMC administrator (Account → Users). Without it, publishing answers
-"…as anna@example.com, who is not a Publisher in DMC".
+DMC), and the Publisher role, granted by a DMC administrator (Account → Users). Without it the server keeps no file
+for them — an upload is refused with 403, a link is not fetched — and publishing answers "…as anna@example.com, who
+is not a Publisher in DMC". Finding and reading components works for anyone.
 
 **The token goes on to DMC.** dmc-mcp makes each DMC call of the request with the person's own token, and never
 stores, logs or echoes it. MCP's authorization spec warns against passing a client's token through to another API;
 here the token is a `licsys` token — the realm DMC's own site signs in with — and it goes to the API of the same site,
-which checks it itself. To accept only tokens minted for the agent, have the Keycloak administrator add an audience
-mapper to the agent's client (say, `dmc-mcp` into `aud`), then set `DMC_MCP_AUDIENCE=dmc-mcp` and
-`DMC_MCP_CLIENTS=<the agent's client id>` on the server.
+which checks it itself: in DMC a token does nothing through dmc-mcp that its holder could not do directly. The
+server's own disk and CPU are another matter — any licsys account can mint a token — hence the client list, and files
+kept only for Publishers. MCP also asks that a server check a token was issued for it: have the Keycloak administrator
+add an audience mapper to the agent's client (say, `dmc-mcp` into `aud`), then set `DMC_MCP_AUDIENCE=dmc-mcp` too.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `DMC_MCP_KEY` | — (required) | the server's key, 32+ characters |
 | `DMC_MCP_ISSUER` | `https://webservices.encycam.com/keycloak/realms/licsys` | the realm whose access tokens are accepted; `off` — the key alone |
-| `DMC_MCP_CLIENTS` | any client of the realm | comma-separated `azp` values a token must have |
-| `DMC_MCP_AUDIENCE` | not checked | comma-separated `aud` values, one of which a token must carry |
+| `DMC_MCP_CLIENTS` | — | comma-separated `azp` values a token must have; tokens are off unless this or `DMC_MCP_AUDIENCE` is set |
+| `DMC_MCP_AUDIENCE` | — | comma-separated `aud` values, one of which a token must carry |
 | `DMC_MCP_PUBLIC_URL` | `https://dmc.encycam.com` | the site as clients see it, for the 401 and the metadata |
 | `DMC_MCP_DATA` | `/data` | the server's sign-in and the uploads |
 
 A token passes when it is a Keycloak access token of that realm (`typ` Bearer), signed with one of the realm's
 published keys by RS/PS/ES, unexpired and already valid (30 seconds of clock skew), with a subject, and on the lists
-when they are set. The realm's keys are fetched on the first token and kept 12 hours; a key the realm has just rotated
-in is picked up at once (at most one fetch a minute).
+that are set. The realm's keys are fetched on the first token and kept 12 hours, and refreshed behind the keys in
+hand; a key the realm has just rotated in is picked up at once (at most one fetch a minute). While Keycloak cannot be
+reached it is asked at most once a minute, and until the keys are in, tokens are answered 503 at once.
 
 **Running it (operators):** on the server, once —
 
     mkdir -p /opt/dmc-mcp/data && chown 1654:1654 /opt/dmc-mcp/data && chmod 700 /opt/dmc-mcp/data
     printf 'DMC_MCP_KEY=%s\n' "$(openssl rand -hex 32)" > /opt/dmc-mcp/dmc-mcp.env && chmod 600 /opt/dmc-mcp/dmc-mcp.env
+    echo 'DMC_MCP_CLIENTS=<agent client id>' >> /opt/dmc-mcp/dmc-mcp.env    # people's own tokens; without it, the key alone
     sh deploy/update.sh 0.9.0
     docker exec -it dmc-mcp dotnet /app/dmc-mcp.dll login --password    # the server's DMC account, for the key
 
-then `sh deploy/update.sh <version>` for every release; the other variables go into the same `dmc-mcp.env`. At startup
-`docker logs dmc-mcp` says which ways in are open (the key; tokens from which realm, for which clients and audience)
-and whether the realm's keys could be fetched; within a minute of the sign-in it says whom the server itself is signed
-in as, with the roles, and warns if Publisher is missing. The server's own sign-in matters only for the key.
+then `sh deploy/update.sh <version>` for every release; the other variables go into the same `dmc-mcp.env` (an env
+file from 0.8.0, with the key alone, keeps the key alone). At startup `docker logs dmc-mcp` says which ways in are
+open (the key; tokens from which realm, for which clients and audience — or that they are off, and what turns them
+on) and whether the realm's keys could be fetched; within a minute of the sign-in it says whom the server itself is
+signed in as, with the roles, and warns if Publisher is missing. The server's own sign-in matters only for the key.
 nginx proxies `/mcp` to `127.0.0.1:8095` without buffering, with 15-minute timeouts and with neither access nor
 error log: an error line quotes the request line, and with it a key in the path. Clients that can set a header should
 use `Authorization: Bearer`; the path form is for URL-only clients. The two metadata paths
