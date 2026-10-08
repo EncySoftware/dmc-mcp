@@ -37,13 +37,16 @@ public class ServeTokenTests : IAsyncLifetime
         try { Directory.Delete(_data, true); } catch { }
     }
 
+    /** Hermes's client by default — tokens are never taken without an allow-list; the test realm's tokens name it. */
     private static TokenSettings Realm(string[]? clients = null, string[]? audiences = null) =>
-        new(TestIssuer.Issuer, clients ?? Array.Empty<string>(), audiences ?? Array.Empty<string>());
+        new(TestIssuer.Issuer, clients ?? (audiences == null ? new[] { "hermes" } : Array.Empty<string>()),
+            audiences ?? Array.Empty<string>());
 
-    private async Task<HttpClient> Start(FakeDmcClient dmc, TokenSettings? tokens = null, bool tokensOff = false)
+    private Task<HttpClient> Start(FakeDmcClient dmc, TokenSettings? tokens = null, bool tokensOff = false) =>
+        Start(dmc, new ServeSettings(Key, Path.Combine(_data, _apps.Count.ToString()), tokensOff ? null : tokens ?? Realm(), PublicUrl));
+
+    private async Task<HttpClient> Start(FakeDmcClient dmc, ServeSettings settings)
     {
-        var settings = new ServeSettings(Key, Path.Combine(_data, _apps.Count.ToString()),
-            tokensOff ? null : tokens ?? Realm(), PublicUrl);
         var app = ServeCommand.Build(new[] { "--urls", "http://127.0.0.1:0" }, settings, s =>
         {
             s.AddSingleton<IDmcClient>(dmc);
@@ -379,7 +382,7 @@ public class ServeTokenTests : IAsyncLifetime
         var open = ServeCommand.Modes(new ServeSettings(Key, _data, Realm(), PublicUrl));
         Assert.Contains("key", open);
         Assert.Contains("tokens from " + TestIssuer.Issuer, open);
-        Assert.Contains("clients any", open);
+        Assert.Contains("clients hermes", open);
         Assert.Contains("audience not checked", open);
         Assert.DoesNotContain(Key, open);
 
@@ -387,7 +390,70 @@ public class ServeTokenTests : IAsyncLifetime
         Assert.Contains("clients hermes, hermes-dev", narrowed);
         Assert.Contains("audience dmc-mcp", narrowed);
 
+        Assert.Contains("clients any, audience dmc-mcp",
+            ServeCommand.Modes(new ServeSettings(Key, _data, Realm(audiences: new[] { "dmc-mcp" }), PublicUrl)));
         Assert.Contains("tokens off", ServeCommand.Modes(new ServeSettings(Key, _data, null, PublicUrl)));
+    }
+
+    // ------------------------------------------------------------------ the environment
+
+    private static Func<string, string?> Env(params (string Name, string? Value)[] vars) =>
+        name => vars.FirstOrDefault(v => v.Name == name).Value;
+
+    /**
+     * Upgrading from 0.8.0 with its dmc-mcp.env — the key alone — must not open the door to every licsys account:
+     * tokens stay off, the startup line says what turns them on, and a token at the door is just a wrong key.
+     */
+    [Fact]
+    public async Task AnEnvFileFrom080KeepsTheKeyAlone()
+    {
+        var (settings, error) = ServeCommand.Read(Env(("DMC_MCP_KEY", Key), ("DMC_MCP_DATA", Path.Combine(_data, "env"))));
+        Assert.Null(error);
+        Assert.Null(settings!.Tokens);
+        var line = ServeCommand.Modes(settings);
+        Assert.Contains("tokens off", line);
+        Assert.Contains("DMC_MCP_CLIENTS", line);
+
+        var http = await Start(new FakeDmcClient(), settings);
+        var resp = await http.SendAsync(Initialize(_realm.Token()));
+        Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
+        Assert.Equal("Bearer", Challenge(resp));
+        Assert.Equal(0, _realm.Attempts);
+        Assert.Equal(HttpStatusCode.OK, (await http.SendAsync(Initialize(Key))).StatusCode);
+    }
+
+    [Fact]
+    public void NamingTheAgentsClientOrAnAudienceTurnsTokensOn()
+    {
+        var (settings, error) = ServeCommand.Read(Env(("DMC_MCP_KEY", Key), ("DMC_MCP_CLIENTS", "hermes")));
+        Assert.Null(error);
+        Assert.Equal(TokenSettings.DefaultIssuer, settings!.Tokens!.Issuer);
+        Assert.Equal(new[] { "hermes" }, settings.Tokens.Clients);
+        Assert.Equal(Brand.Site, settings.PublicUrl);
+        Assert.Equal("/data", settings.DataDir);
+        Assert.Contains("clients hermes", ServeCommand.Modes(settings));
+
+        var (byAudience, _) = ServeCommand.Read(Env(("DMC_MCP_KEY", Key), ("DMC_MCP_AUDIENCE", "dmc-mcp")));
+        Assert.Equal(new[] { "dmc-mcp" }, byAudience!.Tokens!.Audiences);
+
+        var (off, _) = ServeCommand.Read(Env(("DMC_MCP_KEY", Key), ("DMC_MCP_ISSUER", "off"), ("DMC_MCP_CLIENTS", "hermes")));
+        Assert.Null(off!.Tokens);
+        Assert.Contains("DMC_MCP_ISSUER=off", ServeCommand.Modes(off));
+    }
+
+    [Theory]
+    [InlineData(null, null, null)]
+    [InlineData("too-short", null, null)]
+    [InlineData(Key, "http://kc.example/realms/licsys", null)]
+    [InlineData(Key, null, "http://dmc.example")]
+    [InlineData(Key, null, "https://dmc.example/sub")]
+    public void WhatCannotStartIsSaid(string? key, string? issuer, string? publicUrl)
+    {
+        var (settings, error) = ServeCommand.Read(Env(("DMC_MCP_KEY", key), ("DMC_MCP_ISSUER", issuer),
+            ("DMC_MCP_PUBLIC_URL", publicUrl), ("DMC_MCP_CLIENTS", "hermes")));
+        Assert.Null(settings);
+        Assert.NotNull(error);
+        Assert.DoesNotContain(Key, error);
     }
 
     // ------------------------------------------------------------------ nothing logs a token

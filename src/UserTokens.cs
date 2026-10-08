@@ -5,25 +5,53 @@ namespace DmcMcp;
 
 /// <summary>
 /// Which access tokens the hosted server takes: those of one Keycloak realm (DMC_MCP_ISSUER, by default the realm DMC
-/// itself signs in with), optionally only those minted for certain clients (DMC_MCP_CLIENTS, the azp claim) or
-/// audiences (DMC_MCP_AUDIENCE, the aud claim). DMC_MCP_ISSUER=off leaves the key as the only way in.
+/// itself signs in with), and of them only those minted for a client (DMC_MCP_CLIENTS, the azp claim) or an audience
+/// (DMC_MCP_AUDIENCE, the aud claim) the operator names. At least one of the two lists, or tokens stay off: anyone can
+/// register a licsys account and mint an access token with a public client's password grant, so "any client of the
+/// realm" means anyone at all. DMC_MCP_ISSUER=off leaves the key as the only way in, too.
 /// </summary>
-public sealed record TokenSettings(string Issuer, IReadOnlyList<string> Clients, IReadOnlyList<string> Audiences)
+public sealed record TokenSettings
 {
     public const string DefaultIssuer = Brand.KeycloakUrl + "realms/" + Brand.KeycloakRealm;
 
     /** Keycloak's clock and this server's differ by seconds, not minutes. */
     public static readonly TimeSpan ClockSkew = TimeSpan.FromSeconds(30);
 
-    /** The environment's values; null when tokens are off. Throws ArgumentException for an issuer that is no https address. */
+    public TokenSettings(string issuer, IReadOnlyList<string> clients, IReadOnlyList<string> audiences)
+    {
+        if (clients.Count == 0 && audiences.Count == 0)
+            throw new ArgumentException("tokens need DMC_MCP_CLIENTS or DMC_MCP_AUDIENCE: without either, any client of the realm would do");
+        Issuer = issuer;
+        Clients = clients;
+        Audiences = audiences;
+    }
+
+    public string Issuer { get; }
+    public IReadOnlyList<string> Clients { get; }
+    public IReadOnlyList<string> Audiences { get; }
+
+    /**
+     * The environment's values; null when tokens are off — DMC_MCP_ISSUER=off, or neither list set (an env file from
+     * 0.8.0 holds the key alone, and keeps meaning the key alone). Throws ArgumentException for an issuer that is no
+     * https address.
+     */
     public static TokenSettings? Parse(string? issuer, string? clients, string? audience)
     {
+        if (IsOff(issuer)) return null;
         var iss = string.IsNullOrWhiteSpace(issuer) ? DefaultIssuer : issuer.Trim();
-        if (iss.Equals("off", StringComparison.OrdinalIgnoreCase)) return null;
         if (!Uri.TryCreate(iss, UriKind.Absolute, out var uri) || !IsSecure(uri))
             throw new ArgumentException($"DMC_MCP_ISSUER must be the realm's https address (or off), not \"{iss}\"");
-        return new TokenSettings(iss, List(clients), List(audience));
+        var (c, a) = (List(clients), List(audience));
+        return c.Count == 0 && a.Count == 0 ? null : new TokenSettings(iss, c, a);
     }
+
+    /** For the startup line: why Parse gave null. */
+    public static string WhyOff(string? issuer) => IsOff(issuer)
+        ? "tokens off (DMC_MCP_ISSUER=off)"
+        : "tokens off: neither DMC_MCP_CLIENTS nor DMC_MCP_AUDIENCE is set, and without them any client of the realm "
+          + "would do — set DMC_MCP_CLIENTS to the agent's client id to take people's own tokens";
+
+    private static bool IsOff(string? issuer) => string.Equals(issuer?.Trim(), "off", StringComparison.OrdinalIgnoreCase);
 
     /** https, or plain http on this machine only (a Keycloak in a developer's container). */
     internal static bool IsSecure(Uri uri) =>
@@ -52,8 +80,8 @@ public sealed record TokenCheck(Caller? Caller, string? Refusal, bool Unavailabl
 /// Checks a person's access token. Only a Keycloak access token of the trusted realm passes: signed with one of the
 /// realm's published keys by an asymmetric algorithm (alg none and HS* never), iss exactly the realm, unexpired and
 /// already valid (30 seconds of skew), payload typ Bearer (an ID, refresh or offline token is not for calling an
-/// API), a subject, and — when the lists are set — azp and aud on them. Nothing here reaches the network per
-/// token: the keys come from <see cref="IssuerKeys"/>.
+/// API), a subject, and azp and aud on the lists that are set (at least one is). Nothing here reaches the network
+/// per token: the keys come from <see cref="IssuerKeys"/>.
 /// </summary>
 public sealed class UserTokens(TokenSettings settings, IssuerKeys keys)
 {

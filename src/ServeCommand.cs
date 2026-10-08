@@ -11,10 +11,11 @@ using ModelContextProtocol.Authentication;
 namespace DmcMcp;
 
 /// <summary>
-/// What `dmc-mcp serve` runs with. Tokens null — the key is the only way in (DMC_MCP_ISSUER=off). PublicUrl is the
-/// site as clients see it (DMC_MCP_PUBLIC_URL): behind nginx the request itself says http://127.0.0.1.
+/// What `dmc-mcp serve` runs with. Tokens null — the key is the only way in, and TokensOff says why (for the startup
+/// line). PublicUrl is the site as clients see it (DMC_MCP_PUBLIC_URL): behind nginx the request itself says
+/// http://127.0.0.1.
 /// </summary>
-public sealed record ServeSettings(string Key, string DataDir, TokenSettings? Tokens, string PublicUrl)
+public sealed record ServeSettings(string Key, string DataDir, TokenSettings? Tokens, string PublicUrl, string? TokensOff = null)
 {
     public string ResourceUrl => PublicUrl + "/mcp";
     public string MetadataUrl => PublicUrl + Door.McpMetadataPath;
@@ -46,33 +47,32 @@ public static class ServeCommand
 
     public static async Task<int> Run(string[] args)
     {
-        var key = Environment.GetEnvironmentVariable("DMC_MCP_KEY")?.Trim();
-        if (key is null || key.Length < 32)
+        var (settings, error) = Read(Environment.GetEnvironmentVariable);
+        if (settings == null)
         {
-            Console.Error.WriteLine("ERROR: set DMC_MCP_KEY to a random key of at least 32 characters (openssl rand -hex 32).");
+            Console.Error.WriteLine("ERROR: " + error);
             return 1;
         }
-        var data = Environment.GetEnvironmentVariable("DMC_MCP_DATA") is { Length: > 0 } d ? d : "/data";
-        TokenSettings? tokens;
-        try
-        {
-            tokens = TokenSettings.Parse(Environment.GetEnvironmentVariable("DMC_MCP_ISSUER"),
-                Environment.GetEnvironmentVariable("DMC_MCP_CLIENTS"), Environment.GetEnvironmentVariable("DMC_MCP_AUDIENCE"));
-        }
-        catch (ArgumentException e)
-        {
-            Console.Error.WriteLine("ERROR: " + e.Message);
-            return 1;
-        }
-        var publicUrl = (Environment.GetEnvironmentVariable("DMC_MCP_PUBLIC_URL") is { Length: > 0 } p ? p.Trim() : Brand.Site).TrimEnd('/');
-        if (!Uri.TryCreate(publicUrl, UriKind.Absolute, out var uri) || !TokenSettings.IsSecure(uri) || uri.AbsolutePath != "/")
-        {
-            Console.Error.WriteLine($"ERROR: DMC_MCP_PUBLIC_URL must be the site's https address, like {Brand.Site}, not \"{publicUrl}\".");
-            return 1;
-        }
-        var app = Build(args, new ServeSettings(key, data, tokens, publicUrl));
-        if (tokens != null) app.Lifetime.ApplicationStarted.Register(() => _ = WarmUp(app));
+        var app = Build(args, settings);
+        if (settings.Tokens != null) app.Lifetime.ApplicationStarted.Register(() => _ = WarmUp(app));
         return await RunUntilStopped(app);
+    }
+
+    /** The settings the environment gives, or why the server cannot start with them. No message holds the key. */
+    internal static (ServeSettings? Settings, string? Error) Read(Func<string, string?> env)
+    {
+        var key = env("DMC_MCP_KEY")?.Trim();
+        if (key is null || key.Length < 32)
+            return (null, "set DMC_MCP_KEY to a random key of at least 32 characters (openssl rand -hex 32).");
+        var data = env("DMC_MCP_DATA") is { Length: > 0 } d ? d : "/data";
+        var issuer = env("DMC_MCP_ISSUER");
+        TokenSettings? tokens;
+        try { tokens = TokenSettings.Parse(issuer, env("DMC_MCP_CLIENTS"), env("DMC_MCP_AUDIENCE")); }
+        catch (ArgumentException e) { return (null, e.Message); }
+        var publicUrl = (env("DMC_MCP_PUBLIC_URL") is { Length: > 0 } p ? p.Trim() : Brand.Site).TrimEnd('/');
+        if (!Uri.TryCreate(publicUrl, UriKind.Absolute, out var uri) || !TokenSettings.IsSecure(uri) || uri.AbsolutePath != "/")
+            return (null, $"DMC_MCP_PUBLIC_URL must be the site's https address, like {Brand.Site}, not \"{publicUrl}\".");
+        return (new ServeSettings(key, data, tokens, publicUrl, tokens == null ? TokenSettings.WhyOff(issuer) : null), null);
     }
 
     /** The issuer's keys fetched ahead of the first token, and a line saying whether Keycloak answered. */
@@ -108,12 +108,12 @@ public static class ServeCommand
     internal static string Modes(ServeSettings settings) =>
         "Ways in: the key (the server's own DMC account); "
         + (settings.Tokens == null
-            ? "tokens off (DMC_MCP_ISSUER=off)"
+            ? settings.TokensOff ?? "tokens off"
             : settings.Tokens.Describe() + $" (each call runs as the token's person); resource metadata at {settings.MetadataUrl}");
 
-    /** 0.8.0's shape, for tests that need no tokens of their own: the default realm, the public site. */
+    /** 0.8.0's shape, for tests that need no tokens: the key alone (as an env file from 0.8.0 gives), the public site. */
     internal static WebApplication Build(string[] args, string key, string dataDir, Action<IServiceCollection>? configure = null) =>
-        Build(args, new ServeSettings(key, dataDir, TokenSettings.Parse(null, null, null), Brand.Site), configure);
+        Build(args, new ServeSettings(key, dataDir, null, Brand.Site, TokenSettings.WhyOff(null)), configure);
 
     internal static WebApplication Build(string[] args, ServeSettings settings, Action<IServiceCollection>? configure = null)
     {

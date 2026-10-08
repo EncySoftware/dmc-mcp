@@ -12,8 +12,10 @@ public class UserTokensTests
     private readonly ManualClock _clock = new(DateTimeOffset.UtcNow);
     private IssuerKeys? _keys;
 
+    /** Hermes's client by default: a token is never taken without an allow-list, and the test realm's tokens name it. */
     private UserTokens Tokens(string[]? clients = null, string[]? audiences = null) =>
-        new(new TokenSettings(TestIssuer.Issuer, clients ?? Array.Empty<string>(), audiences ?? Array.Empty<string>()),
+        new(new TokenSettings(TestIssuer.Issuer, clients ?? (audiences == null ? new[] { "hermes" } : Array.Empty<string>()),
+                audiences ?? Array.Empty<string>()),
             _keys = new IssuerKeys(TestIssuer.Issuer, _realm, _clock));
 
     private static long Now => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -93,11 +95,20 @@ public class UserTokensTests
         Refused(await Tokens().Check(token), token, "issuer");
     }
 
+    /**
+     * Never every client of the realm: anyone can register a licsys account and mint an access token with a public
+     * client's password grant. A token is taken only from a client or for an audience the operator named.
+     */
     [Fact]
-    public async Task WithoutAllowListsAnyClientAndAudienceOfTheRealmIsAccepted()
+    public void TokenSettingsWithoutAnAllowListCannotBeMade() =>
+        Assert.Throws<ArgumentException>(() => new TokenSettings(TestIssuer.Issuer, Array.Empty<string>(), Array.Empty<string>()));
+
+    /** An audience list alone narrows enough: the client then does not matter. */
+    [Fact]
+    public async Task AnAudienceAloneIsAnAllowList()
     {
-        var r = await Tokens().Check(_realm.Token(edit: c => { c["azp"] = "some-other-client"; c["aud"] = null; }));
-        Assert.NotNull(r.Caller);
+        var token = _realm.Token(edit: c => { c["azp"] = "some-other-client"; c["aud"] = "dmc-mcp"; });
+        Assert.NotNull((await Tokens(audiences: new[] { "dmc-mcp" }).Check(token)).Caller);
     }
 
     [Fact]
@@ -274,14 +285,29 @@ public class UserTokensTests
         Assert.Equal("https://kc.example/realms/licsys", s!.Issuer);
         Assert.Equal(new[] { "hermes", "hermes-dev" }, s.Clients);
         Assert.Empty(s.Audiences);
-        Assert.Equal(TokenSettings.DefaultIssuer, TokenSettings.Parse(null, null, null)!.Issuer);
-        Assert.Null(TokenSettings.Parse("off", null, null));
+        Assert.Equal(TokenSettings.DefaultIssuer, TokenSettings.Parse(null, "hermes", null)!.Issuer);
+        Assert.Equal(new[] { "dmc-mcp" }, TokenSettings.Parse(null, null, "dmc-mcp")!.Audiences);
+        Assert.Null(TokenSettings.Parse("off", "hermes", null));
         Assert.Equal("https://webservices.encycam.com/keycloak/realms/licsys", TokenSettings.DefaultIssuer);
+    }
+
+    /** An env file from 0.8.0 — the key alone — keeps the key alone: tokens stay off until a list names who may send them. */
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("", " ")]
+    [InlineData(" , ", ",")]
+    public void WithoutAnAllowListTokensAreOff(string? clients, string? audience)
+    {
+        Assert.Null(TokenSettings.Parse(null, clients, audience));
+        Assert.Null(TokenSettings.Parse("https://kc.example/realms/licsys", clients, audience));
     }
 
     [Theory]
     [InlineData("http://kc.example/realms/licsys")]
     [InlineData("realms/licsys")]
-    public void AnIssuerMustBeAnHttpsAddress(string issuer) =>
-        Assert.Throws<ArgumentException>(() => TokenSettings.Parse(issuer, null, null));
+    public void AnIssuerMustBeAnHttpsAddress(string issuer)
+    {
+        Assert.Throws<ArgumentException>(() => TokenSettings.Parse(issuer, "hermes", null));
+        Assert.Throws<ArgumentException>(() => TokenSettings.Parse(issuer, null, null)); // said even before a list is set
+    }
 }
