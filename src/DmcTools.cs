@@ -18,6 +18,9 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
     /** Where file arguments come from: local paths at home; upload ids and links on the hosted server. */
     private readonly FileInputs _inputs = inputs ?? FileInputs.Local;
 
+    /** Who a person's token is in DMC, for the errors that name the account (Why); asked once a minute per token at most. */
+    private readonly Who _who = new(dmc);
+
     /** Replaced in tests: a real sleep while polling is pointless there. */
     internal Func<TimeSpan, Task> Delay { get; set; } = Task.Delay;
     internal TimeSpan PollEvery { get; set; } = TimeSpan.FromSeconds(2);
@@ -36,6 +39,9 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
     internal const string NoLogin =
         "ERROR: not signed in to DMC on this machine — run `" + Brand.Cli + " login` once in a terminal.";
 
+    internal const string RequestEnded =
+        "ERROR: the request this call belonged to has ended, so it runs as nobody — nothing was done. Call again.";
+
     internal const string HostedNoLogin =
         "ERROR: the hosted DMC server is not signed in — its operator runs `" + SignInKeepAlive.HostedLoginCommand + "` once.";
 
@@ -50,7 +56,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         var (token, _) = await Token(); // works without sign-in too: published posts are visible to everyone
         ProductInfo? p;
         try { p = await dmc.GetProduct(idOrSlug, token); }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: DMC did not respond: " + e.Message; }
         if (p == null)
             return $"DMC did not find \"{idOrSlug}\" — it does not exist, or it is someone else's draft"
@@ -133,7 +139,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
 
         ProductInfo? p;
         try { p = await dmc.GetProduct(id, token); }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: DMC did not respond: " + e.Message; }
         if (p == null) return Explain(new DmcHttpException(404, ""));
 
@@ -156,7 +162,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
 
         ProductInfo? p;
         try { p = await dmc.GetProduct(id, token); }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: DMC did not respond: " + e.Message; }
         if (p == null) return Explain(new DmcHttpException(404, ""));
         if (p.PublicationStatus is "PENDING_REVIEW" or "PUBLISHED")
@@ -168,7 +174,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
             return "ERROR: DMC did not accept it for moderation — " + ErrorText(e.Body)
                  + ". Fill in what is missing with update_post and try again.";
         }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: DMC did not respond: " + e.Message; }
 
         return $"{p.Name} submitted for moderation — it will appear in the catalogue once approved.\nLink: {p.Url(dmc.Site)}";
@@ -195,7 +201,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         var (token, _) = await Token(); // the catalogue is visible without sign-in; your own drafts only with it
         IReadOnlyList<ProductInfo> published;
         try { published = await dmc.Search(type, query, controllerManufacturer, machineManufacturer, token); }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: DMC did not respond: " + e.Message; }
 
         var mine = new List<ProductInfo>();
@@ -269,13 +275,13 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         // Read the card BEFORE uploading: someone else's or a nonexistent id must not cost a file in tmp/.
         ProductInfo? p;
         try { p = await dmc.GetProduct(id, token); }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: DMC did not respond: " + e.Message; }
         if (p == null) return Explain(new DmcHttpException(404, ""));
 
         string staged;
         try { staged = await dmc.UploadFile(path, token); }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: could not upload the file to DMC: " + e.Message; }
 
         // A full PUT with the tmp/… path: the backend moves the file to the product, deletes the old one, re-reads
@@ -283,7 +289,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         var body = DmcJson.RequestFrom(p.Raw);
         body["productFile"] = staged;
         try { await dmc.UpdateProduct(p.Id, body, token); }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: DMC did not respond: " + e.Message; }
 
         var sb = new StringBuilder();
@@ -502,7 +508,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         var (token, _) = await Token();
         IReadOnlyList<ProductInfo> found;
         try { found = await dmc.Search("MACHINE_SCHEMA", query, null, machineManufacturer, token); }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: DMC did not respond: " + e.Message; }
         if (found.Count == 0) return "DMC found no schemas for this query.";
         var sb = new StringBuilder();
@@ -538,7 +544,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
 
         try { await dmc.AddLinks(p.Id, "MADE_FOR", ids, token); }
         catch (DmcHttpException e) when (e.Status == 400) { return "ERROR: DMC rejected the link — " + ErrorText(e.Body); }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: DMC did not respond: " + e.Message; }
 
         IReadOnlyList<LinkInfo> links;
@@ -571,7 +577,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         if (token == null) return err!;
         IReadOnlyList<ProductInfo> mine;
         try { mine = await dmc.MyProducts(token); }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: DMC did not respond: " + e.Message; }
 
         var posts = mine.Where(p => (type == null || p.ContentType == type) && (want == null || p.PublicationStatus == want)).ToList();
@@ -600,7 +606,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
                  + "Unpublish it in your DMC account.";
         try { await dmc.DeleteProduct(p.Id, token); }
         catch (DmcHttpException e) when (e.Status == 409) { return "ERROR: DMC will not delete it — " + ErrorText(e.Body); }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: DMC did not respond: " + e.Message; }
         return $"Draft \"{p.Name}\" deleted.";
     }
@@ -619,7 +625,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         if (p == null) return getErr!;
         string text;
         try { text = await dmc.GenerateDescription(DmcJson.RequestFrom(p.Raw), token); }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: AI did not respond: " + e.Message; }
         if (!save) return text + "\n(not saved — save=false)";
         var (_, putErr) = await PutFields(p, new FieldSet(Description: text), token);
@@ -652,7 +658,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
             }
             else image = await dmc.GenerateImage(DmcJson.RequestFrom(p.Raw), token);
         }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: could not get the cover: " + e.Message; }
 
         var putErr = await PutRaw(p, "imageUrl", image, token);
@@ -670,7 +676,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         if (p == null) return getErr!;
         string path;
         try { path = await dmc.GenerateSampleCode(DmcJson.RequestFrom(p.Raw), token); }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: AI did not respond: " + e.Message; }
         var putErr = await PutRaw(p, "sampleOutputCodeFile", path, token);
         return putErr ?? $"Sample NC code generated and attached to \"{p.Name}\".\nLink: {p.Url(dmc.Site)}";
@@ -687,7 +693,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         if (p == null) return getErr!;
         string path;
         try { path = await dmc.GenerateCodesList(DmcJson.RequestFrom(p.Raw), token); }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: AI did not respond: " + e.Message; }
         var putErr = await PutRaw(p, "supportedCodesFile", path, token);
         return putErr ?? $"Codes list generated and attached to \"{p.Name}\".\nLink: {p.Url(dmc.Site)}";
@@ -701,7 +707,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
             var p = await dmc.GetProduct(id, token);
             return p == null ? (null, Explain(new DmcHttpException(404, ""))) : (p, null);
         }
-        catch (DmcHttpException e) { return (null, Explain(e)); }
+        catch (DmcHttpException e) { return (null, await Why(e)); }
         catch (Exception e) { return (null, "ERROR: DMC did not respond: " + e.Message); }
     }
 
@@ -711,7 +717,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         var body = DmcJson.RequestFrom(p.Raw);
         body[field] = value;
         try { await dmc.UpdateProduct(p.Id, body, token); return null; }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: DMC did not respond: " + e.Message; }
     }
 
@@ -745,7 +751,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         if (token == null) return err!;
         IReadOnlyList<ProductInfo> mine;
         try { mine = await dmc.MyProducts(token); }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: DMC did not respond: " + e.Message; }
 
         var drafts = mine.Where(p => p.PublicationStatus == "DRAFT").ToList();
@@ -786,7 +792,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         {
             IReadOnlyList<ProductInfo> mine;
             try { mine = await dmc.MyProducts(token); }
-            catch (DmcHttpException e) { return Explain(e); }
+            catch (DmcHttpException e) { return await Why(e); }
             catch (Exception e) { return "ERROR: DMC did not respond: " + e.Message; }
             targets = mine.Where(p => p.PublicationStatus == "DRAFT").ToList();
             if (targets.Count == 0) return "You have no drafts.";
@@ -817,7 +823,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
             if (missing.Count > 0) { sb.AppendLine($"{Title(p)} — missing: {string.Join(", ", missing)}"); continue; }
             try { await dmc.SetStatus(p.Id, "PENDING_REVIEW", token); sb.AppendLine($"{Title(p)} — submitted for moderation"); }
             catch (DmcHttpException e) when (e.Status == 400) { sb.AppendLine($"{Title(p)} — DMC did not accept it: {ErrorText(e.Body)}"); }
-            catch (DmcHttpException e) { sb.AppendLine($"{Title(p)} — {Explain(e)}"); }
+            catch (DmcHttpException e) { sb.AppendLine($"{Title(p)} — {await Why(e)}"); }
             catch (Exception e) { sb.AppendLine($"{Title(p)} — DMC did not respond: {e.Message}"); }
         }
         return sb.ToString();
@@ -834,7 +840,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         var (token, _) = await Token(); // published ones are visible without sign-in too
         ProductInfo? p;
         try { p = await dmc.GetProduct(idOrSlug, token); }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: DMC did not respond: " + e.Message; }
         if (p == null) return $"DMC did not find \"{idOrSlug}\" — it does not exist, or it is someone else's draft.";
 
@@ -898,7 +904,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
 
         string staged;
         try { staged = await dmc.UploadFile(path, token); }
-        catch (DmcHttpException e) { return Explain(e); }
+        catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: could not upload the file to DMC: " + e.Message; }
 
         var putErr = await PutRaw(p, "imageUrl", staged, token);
@@ -972,7 +978,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
     {
         string importId = Guid.NewGuid().ToString("N");
         try { importId = await dmc.StartImport(path, importId, ai, nameHint, descriptionHint, token); }
-        catch (DmcHttpException e) { return (null, Explain(e)); }
+        catch (DmcHttpException e) { return (null, await Why(e)); }
         catch (Exception e) { return (null, "ERROR: could not send the file to DMC: " + e.Message); }
         return await WaitImport(importId, token, progress);
     }
@@ -991,7 +997,16 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         {
             try { state = await dmc.GetImportProgress(importId, token); }
             catch (DmcHttpException e) when (e.Status == 404) { return (null, $"ERROR: import {importId} not found — old or someone else's."); }
-            catch (DmcHttpException e) { return (null, Explain(e)); }
+            // The sign-in ran out mid-wait — a person's token lives minutes, an import may take ten. The import does not.
+            catch (DmcHttpException e) when (e.Status == 401)
+            {
+                return (null, $"Import {importId} is still running in DMC (or has just finished), but DMC stopped "
+                            + "accepting the sign-in while waiting for it"
+                            + (Caller.Current is { IsUser: true } ? " — the token expired" : "")
+                            + $". The import carries on: check_import(\"{importId}\") with a fresh sign-in shows the result. "
+                            + "Do not send the file again.");
+            }
+            catch (DmcHttpException e) { return (null, await Why(e)); }
             catch (Exception e) { return (null, $"ERROR: DMC did not respond about import {importId}: {e.Message}"); }
             progress?.Report(new ProgressNotificationValue
             {
@@ -1117,7 +1132,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         if (changes.Count == 0) return (changes, null);
 
         try { await dmc.UpdateProduct(p.Id, body, token); }
-        catch (DmcHttpException e) { return (changes, Explain(e)); }
+        catch (DmcHttpException e) { return (changes, await Why(e)); }
         catch (Exception e) { return (changes, "ERROR: DMC did not respond: " + e.Message); }
         return (changes, null);
     }
@@ -1153,6 +1168,25 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         _ => $"ERROR: DMC returned {e.Status}: {ErrorText(e.Body)}",
     };
 
+    /**
+     * Explain for this call. Under a person's own token a 401 or 403 says whose account DMC refused and why —
+     * from /auth/me with that token: not a Publisher, someone else's card, or a token DMC stopped taking. Everything
+     * else, and every call of the key's account, reads as Explain.
+     */
+    internal async Task<string> Why(DmcHttpException e)
+    {
+        if (e.Status is not (401 or 403) || Caller.Current is not { IsUser: true } person) return Explain(e);
+        var me = await _who.Of(person);
+        var name = me?.Username is { Length: > 0 } username ? username : person.Name;
+        if (me != null && !me.Roles.Contains("DEALER", StringComparer.OrdinalIgnoreCase))
+            return $"ERROR: DMC refused it — the call ran as {name}, who is not a Publisher in DMC. A DMC administrator "
+                 + "grants the role (Account → Users); then try again.";
+        if (e.Status == 403) return $"ERROR: DMC refused it for {name}: {ErrorText(e.Body)}";
+        return me == null
+            ? $"ERROR: DMC did not accept the token of {name} — it has expired or is not one DMC takes. Get a fresh token and call again."
+            : $"ERROR: DMC did not accept the token of {name} for this call ({ErrorText(e.Body)}). Call again with a fresh token.";
+    }
+
     /** The backend sends errors as {"error":"..."} — show the text, not the JSON. */
     internal static string ErrorText(string body)
     {
@@ -1165,8 +1199,18 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         return body.Length > 300 ? body[..300] : body;
     }
 
+    /**
+     * The token for this call's DMC requests. On the hosted server a person who came in with their own token is
+     * served with it — their account, their rights; otherwise the stored sign-in (the key's account, or the
+     * machine's in stdio mode).
+     */
     private async Task<(string? Token, string? Error)> Token()
     {
+        var caller = Caller.Current;
+        if (caller is { IsUser: true }) return (caller.AccessToken, null);
+        // On the hosted server the door gives every request a caller. None means the request is over (the client went
+        // away) — whatever still runs must not go on as the server's own account.
+        if (_inputs.Hosted && caller == null) return (null, RequestEnded);
         try
         {
             var t = await tokens.GetAccessToken();

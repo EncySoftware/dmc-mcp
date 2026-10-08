@@ -45,10 +45,21 @@ public class FileInputsTests : IDisposable
     [Fact]
     public async Task UploadIdResolvesOnTheHostedServer()
     {
+        using var asTheKey = Caller.Enter(Caller.Server); // the door's doing on the hosted server
         var saved = await Uploads().Save(new MemoryStream(new byte[] { 1 }), "a.sppx");
         using var input = await Hosted().File(saved.Ref);
         Assert.Null(input.Error);
         Assert.Equal("a.sppx", Path.GetFileName(input.Path));
+    }
+
+    /** No caller — a request that has ended — owns nothing: not even the key's uploads resolve. */
+    [Fact]
+    public async Task WithoutACallerNoUploadResolves()
+    {
+        var saved = await Uploads().Save(new MemoryStream(new byte[] { 1 }), "a.sppx");
+        using var input = await Hosted().File(saved.Ref);
+        Assert.Null(input.Path);
+        Assert.Contains("upload the file again", input.Error);
     }
 
     [Fact]
@@ -68,6 +79,7 @@ public class FileInputsTests : IDisposable
     [Fact]
     public async Task UploadedZipBecomesTheFolderAndGoesAway()
     {
+        using var asTheKey = Caller.Enter(Caller.Server);
         var zip = Path.Combine(_dir, "f.zip");
         using (var z = ZipFile.Open(zip, ZipArchiveMode.Create))
         using (var w = new StreamWriter(z.CreateEntry("a.sppx").Open())) w.Write("x");
@@ -86,6 +98,7 @@ public class FileInputsTests : IDisposable
     [Fact]
     public async Task AZipThatCannotBeUnpackedLeavesNothing()
     {
+        using var asTheKey = Caller.Enter(Caller.Server);
         var zip = Path.Combine(_dir, "bad.zip");
         using (var z = ZipFile.Open(zip, ZipArchiveMode.Create))
             foreach (var name in new[] { "big.bin", "x", "x/y" })

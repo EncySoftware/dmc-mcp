@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using DmcMcp;
 
@@ -13,8 +14,16 @@ public class FakeDmcClient : IDmcClient
     public List<(string Id, IDictionary<string, object?> Body)> Puts { get; } = new();
     public List<(string Id, string Status)> StatusCalls { get; } = new();
 
-    public Task<ProductInfo?> GetProduct(string idOrSlug, string? accessToken) =>
-        Task.FromResult(Products.GetValueOrDefault(idOrSlug));
+    /** Every call with the token it carried — whose account each DMC request ran as. */
+    public ConcurrentQueue<(string Method, string? Token)> Calls { get; } = new();
+    private void Saw(string method, string? token) => Calls.Enqueue((method, token));
+    public IEnumerable<string?> TokensOf(string method) => Calls.Where(c => c.Method == method).Select(c => c.Token);
+
+    public Task<ProductInfo?> GetProduct(string idOrSlug, string? accessToken)
+    {
+        Saw(nameof(GetProduct), accessToken);
+        return Task.FromResult(Products.GetValueOrDefault(idOrSlug));
+    }
 
     /** What the sent zip held — the tool deletes it right after sending, so we look here. */
     public List<string> ZipEntries { get; } = new();
@@ -22,6 +31,7 @@ public class FakeDmcClient : IDmcClient
     public Task<string> StartImport(string filePath, string importId, bool ai, string? nameHint,
         string? descriptionHint, string accessToken)
     {
+        Saw(nameof(StartImport), accessToken);
         if (FailStart != null) throw FailStart;
         Starts.Add((filePath, importId, ai, nameHint, descriptionHint));
         if (filePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) && File.Exists(filePath))
@@ -35,12 +45,14 @@ public class FakeDmcClient : IDmcClient
 
     public Task<ImportProgress> GetImportProgress(string importId, string accessToken)
     {
+        Saw(nameof(GetImportProgress), accessToken);
         if (FailProgress != null) throw FailProgress;
         return Task.FromResult(Progress.Count > 1 ? Progress.Dequeue() : Progress.Peek());
     }
 
     public Task<ProductInfo> UpdateProduct(string id, IDictionary<string, object?> body, string accessToken)
     {
+        Saw(nameof(UpdateProduct), accessToken);
         Puts.Add((id, body));
         var p = Products[id];
         if (body.TryGetValue("name", out var n) && n is string s) p = p with { Name = s };
@@ -50,6 +62,7 @@ public class FakeDmcClient : IDmcClient
 
     public Task<ProductInfo> SetStatus(string id, string status, string accessToken)
     {
+        Saw(nameof(SetStatus), accessToken);
         if (FailStatus != null) throw FailStatus;
         StatusCalls.Add((id, status));
         var p = Products[id] with { PublicationStatus = status };
@@ -66,15 +79,20 @@ public class FakeDmcClient : IDmcClient
     public Task<IReadOnlyList<ProductInfo>> SearchPublished(string? query, string? controllerManufacturer,
         string? machineManufacturer, string? accessToken)
     {
+        Saw(nameof(SearchPublished), accessToken);
         Searches.Add((query, controllerManufacturer, machineManufacturer));
         return Task.FromResult<IReadOnlyList<ProductInfo>>(Published);
     }
 
-    public Task<IReadOnlyList<ProductInfo>> MyProducts(string accessToken) =>
-        Task.FromResult<IReadOnlyList<ProductInfo>>(Mine);
+    public Task<IReadOnlyList<ProductInfo>> MyProducts(string accessToken)
+    {
+        Saw(nameof(MyProducts), accessToken);
+        return Task.FromResult<IReadOnlyList<ProductInfo>>(Mine);
+    }
 
     public Task<string> UploadFile(string filePath, string accessToken)
     {
+        Saw(nameof(UploadFile), accessToken);
         Uploads.Add(Path.GetFileName(filePath));
         return Task.FromResult($"tmp/u{Uploads.Count}/{Path.GetFileName(filePath)}");
     }
@@ -94,6 +112,7 @@ public class FakeDmcClient : IDmcClient
     public Task<IReadOnlyList<ProductInfo>> Search(string? contentType, string? query, string? controllerManufacturer,
         string? machineManufacturer, string? accessToken)
     {
+        Saw(nameof(Search), accessToken);
         Searches.Add((query, controllerManufacturer, machineManufacturer));
         return Task.FromResult<IReadOnlyList<ProductInfo>>(contentType == "MACHINE_SCHEMA" ? Schemas : Published);
     }
@@ -135,8 +154,11 @@ public class FakeDmcClient : IDmcClient
     public MeInfo Who { get; set; } = new("tester", new[] { "USER", "DEALER" }, "acc-1", "Test Co");
     public DmcHttpException? FailMe { get; set; }
 
+    public int MeCalls => TokensOf(nameof(Me)).Count();
+
     public Task<MeInfo> Me(string accessToken)
     {
+        Saw(nameof(Me), accessToken);
         if (FailMe != null) throw FailMe;
         return Task.FromResult(Who);
     }

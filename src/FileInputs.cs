@@ -3,8 +3,9 @@ namespace DmcMcp;
 /// <summary>
 /// Turns a tool's file argument into a local path. At home that is the path itself (an https link works too). On
 /// the hosted server it is never a path — the server would be reading its own disk, and /proc/self/environ holds
-/// its key — but an upload:&lt;id&gt; from POST /mcp/upload or an https link. A folder (publish_folder) arrives on
-/// the hosted server as a zip. Temporary copies go away when the Input is disposed.
+/// its key — but an upload:&lt;id&gt; from POST /mcp/upload (the caller's own: someone else's resolves to nothing) or
+/// an https link. A folder (publish_folder) arrives on the hosted server as a zip. Temporary copies go away when the
+/// Input is disposed.
 /// </summary>
 public sealed class FileInputs(bool hosted, UploadStore? uploads = null, Downloader? downloader = null, string? tempRoot = null)
 {
@@ -12,7 +13,7 @@ public sealed class FileInputs(bool hosted, UploadStore? uploads = null, Downloa
 
     internal const string HostedPathRefusal =
         "ERROR: this is the hosted DMC server — it cannot read paths, neither yours nor its own. Upload the file " +
-        "first (POST <server>/mcp/upload with the same key, multipart field \"file\") and pass the upload:<id> it " +
+        "first (POST <server>/mcp/upload with the same key or token, multipart field \"file\") and pass the upload:<id> it " +
         "returns, or pass an https:// link. A folder goes as a zip.";
 
     private readonly Downloader _downloader = downloader ?? new Downloader();
@@ -41,7 +42,8 @@ public sealed class FileInputs(bool hosted, UploadStore? uploads = null, Downloa
         {
             if (uploads == null)
                 return new Input(null, "ERROR: upload:<id> works only on the hosted server — here pass the file's path.");
-            var stored = uploads.Resolve(arg);
+            // Whoever the door let in: the key's account or a person. No caller — the request is over — owns nothing.
+            var stored = Caller.Current is { } caller ? uploads.Resolve(arg, caller.Owner) : null;
             return stored == null
                 ? new Input(null, $"ERROR: {arg} is unknown or expired (uploads live 24 hours) — upload the file again.")
                 : new Input(stored, null);

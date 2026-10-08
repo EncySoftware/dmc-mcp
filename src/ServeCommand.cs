@@ -3,24 +3,43 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol;
+using ModelContextProtocol.Authentication;
 
 namespace DmcMcp;
 
 /// <summary>
+/// What `dmc-mcp serve` runs with. Tokens null — the key is the only way in (DMC_MCP_ISSUER=off). PublicUrl is the
+/// site as clients see it (DMC_MCP_PUBLIC_URL): behind nginx the request itself says http://127.0.0.1.
+/// </summary>
+public sealed record ServeSettings(string Key, string DataDir, TokenSettings? Tokens, string PublicUrl)
+{
+    public string ResourceUrl => PublicUrl + "/mcp";
+    public string MetadataUrl => PublicUrl + Door.McpMetadataPath;
+
+    /** Never the key: a record's generated ToString would print it into whatever logs the settings. */
+    public override string ToString() => $"serve settings (data {DataDir}, {Tokens?.Describe() ?? "tokens off"}, public {PublicUrl})";
+}
+
+/// <summary>
 /// `dmc-mcp serve`: the same tools over MCP Streamable HTTP for agents that cannot start a local process — Hermes
-/// on the DMC server. Key at the door (KeyAuth), files by upload or link (FileInputs), one DMC account signed in
-/// once inside the container (SignInKeepAlive). Configuration: DMC_MCP_KEY (required, 32+ chars), DMC_MCP_DATA
-/// (default /data), ASPNETCORE_HTTP_PORTS / --urls for the port.
+/// on the DMC server. At the door (Door) the key — the server's one DMC account, signed in once inside the
+/// container (SignInKeepAlive) — or a person's own access token, so the call runs as that person; files by upload
+/// or link (FileInputs), each upload its sender's. Configuration: DMC_MCP_KEY (required, 32+ chars), DMC_MCP_DATA
+/// (default /data), DMC_MCP_ISSUER / DMC_MCP_CLIENTS / DMC_MCP_AUDIENCE for tokens (TokenSettings),
+/// DMC_MCP_PUBLIC_URL, ASPNETCORE_HTTP_PORTS / --urls for the port.
 /// </summary>
 public static class ServeCommand
 {
     internal const string Instructions =
         "Hosted Digital Machine Center server. It cannot read file paths. To pass a file (a post, schema, kit, " +
         "cover or a zipped folder for publish_folder), first upload it to this server: POST <this server's MCP " +
-        "URL>/upload as multipart/form-data with the field \"file\" and the same key (Authorization: Bearer <key>, " +
-        "or the key in the URL path as for MCP). The answer's \"file\" value, upload:<id>, goes into the tool's " +
-        "file argument; uploads live 24 hours. An https:// link to the file works too.";
+        "URL>/upload as multipart/form-data with the field \"file\" and the same credentials as for MCP (your " +
+        "access token or the key as Authorization: Bearer, or the key in the URL path). The answer's \"file\" " +
+        "value, upload:<id>, goes into the tool's file argument; an upload is usable by whoever sent it and lives " +
+        "24 hours. An https:// link to the file works too.";
 
     /** An upload's request: the file and the multipart framing around it. */
     private const long UploadBodyLimit = UploadStore.MaxBytes + 1024 * 1024;
@@ -34,7 +53,43 @@ public static class ServeCommand
             return 1;
         }
         var data = Environment.GetEnvironmentVariable("DMC_MCP_DATA") is { Length: > 0 } d ? d : "/data";
-        return await RunUntilStopped(Build(args, key, data));
+        TokenSettings? tokens;
+        try
+        {
+            tokens = TokenSettings.Parse(Environment.GetEnvironmentVariable("DMC_MCP_ISSUER"),
+                Environment.GetEnvironmentVariable("DMC_MCP_CLIENTS"), Environment.GetEnvironmentVariable("DMC_MCP_AUDIENCE"));
+        }
+        catch (ArgumentException e)
+        {
+            Console.Error.WriteLine("ERROR: " + e.Message);
+            return 1;
+        }
+        var publicUrl = (Environment.GetEnvironmentVariable("DMC_MCP_PUBLIC_URL") is { Length: > 0 } p ? p.Trim() : Brand.Site).TrimEnd('/');
+        if (!Uri.TryCreate(publicUrl, UriKind.Absolute, out var uri) || !TokenSettings.IsSecure(uri) || uri.AbsolutePath != "/")
+        {
+            Console.Error.WriteLine($"ERROR: DMC_MCP_PUBLIC_URL must be the site's https address, like {Brand.Site}, not \"{publicUrl}\".");
+            return 1;
+        }
+        var app = Build(args, new ServeSettings(key, data, tokens, publicUrl));
+        if (tokens != null) app.Lifetime.ApplicationStarted.Register(() => _ = WarmUp(app));
+        return await RunUntilStopped(app);
+    }
+
+    /** The issuer's keys fetched ahead of the first token, and a line saying whether Keycloak answered. */
+    private static async Task WarmUp(WebApplication app)
+    {
+        var log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("DmcMcp.Serve");
+        var tokens = app.Services.GetRequiredService<UserTokens>();
+        try
+        {
+            var keys = await tokens.WarmUp(app.Lifetime.ApplicationStopping);
+            log.LogInformation("Keys of {Issuer}: {Count} loaded — tokens can be checked", tokens.Settings.Issuer, keys.Count);
+        }
+        catch (Exception e)
+        {
+            log.LogWarning("Keys of {Issuer} could not be fetched ({Error}); tokens are answered 503 until they can",
+                tokens.Settings.Issuer, e.Message);
+        }
     }
 
     /**
@@ -44,23 +99,33 @@ public static class ServeCommand
     internal static async Task<int> RunUntilStopped(WebApplication app)
     {
         // Taken before the run: RunAsync disposes the services when it returns.
-        var background = app.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-            .OfType<Microsoft.Extensions.Hosting.BackgroundService>().ToList();
+        var background = app.Services.GetServices<IHostedService>().OfType<BackgroundService>().ToList();
         await app.RunAsync();
         return background.Any(s => s.ExecuteTask is { IsFaulted: true }) ? 1 : 0;
     }
 
-    internal static WebApplication Build(string[] args, string key, string dataDir, Action<IServiceCollection>? configure = null)
+    /** The startup line: which ways in are open. Never the key. */
+    internal static string Modes(ServeSettings settings) =>
+        "Ways in: the key (the server's own DMC account); "
+        + (settings.Tokens == null
+            ? "tokens off (DMC_MCP_ISSUER=off)"
+            : settings.Tokens.Describe() + $" (each call runs as the token's person); resource metadata at {settings.MetadataUrl}");
+
+    /** 0.8.0's shape, for tests that need no tokens of their own: the default realm, the public site. */
+    internal static WebApplication Build(string[] args, string key, string dataDir, Action<IServiceCollection>? configure = null) =>
+        Build(args, new ServeSettings(key, dataDir, TokenSettings.Parse(null, null, null), Brand.Site), configure);
+
+    internal static WebApplication Build(string[] args, ServeSettings settings, Action<IServiceCollection>? configure = null)
     {
         var builder = WebApplication.CreateBuilder(args);
-        // The key may travel in the path: keep ASP.NET from logging request lines.
+        // The key may travel in the path, a token in a header: keep ASP.NET from logging request lines.
         builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
         // Kestrel's default body limit (30 MB) stays for /mcp — the SDK reads a JSON-RPC body whole into memory —
         // and only the upload endpoint raises it for its own request.
         builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = UploadBodyLimit);
 
-        var uploads = new UploadStore(Path.Combine(dataDir, "uploads"));
-        var tmp = Path.Combine(dataDir, "tmp");
+        var uploads = new UploadStore(Path.Combine(settings.DataDir, "uploads"));
+        var tmp = Path.Combine(settings.DataDir, "tmp");
         UploadJanitor.ClearTemp(tmp); // left by a container stopped mid-call; no call is alive yet
         builder.Services.AddSingleton(uploads);
         builder.Services.AddSingleton(new FileInputs(true, uploads, new Downloader(), tmp));
@@ -69,30 +134,43 @@ public static class ServeCommand
         builder.Services.AddSingleton<DmcTools>();
         builder.Services.AddHostedService<SignInKeepAlive>();
         builder.Services.AddHostedService(sp => new UploadJanitor(sp.GetRequiredService<UploadStore>(), tmp));
-        configure?.Invoke(builder.Services); // tests replace DMC, the sign-in or the store
+        if (settings.Tokens is { } tokenSettings)
+        {
+            builder.Services.AddSingleton(new IssuerKeys(tokenSettings.Issuer));
+            builder.Services.AddSingleton(sp => new UserTokens(tokenSettings, sp.GetRequiredService<IssuerKeys>()));
+        }
+        configure?.Invoke(builder.Services); // tests replace DMC, the sign-in, the store or the issuer's keys
         builder.Services
             .AddMcpServer(o => o.ServerInstructions = Instructions)
             // Stateless: nothing to lose on a restart, an update or two idle hours — a session would end with each, and
             // a client that does not re-initialize on 404 stays broken. The tools ask the client nothing (no sampling,
-            // elicitation or roots); progress goes on the call's own response stream.
+            // elicitation or roots); progress goes on the call's own response stream. Each request runs in its own
+            // execution context, which is what carries the caller the door let in.
             .WithHttpTransport(o => o.Stateless = true)
             .WithTools<DmcTools>();
 
         var app = builder.Build();
-        app.Use(async (ctx, next) =>
-        {
-            var (ok, path) = KeyAuth.Check(ctx.Request.Path.Value ?? "", ctx.Request.Headers.Authorization.ToString(), key);
-            if (!ok)
-            {
-                ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                ctx.Response.Headers.WWWAuthenticate = "Bearer";
-                return;
-            }
-            ctx.Request.Path = path;
-            await next();
-        });
+        var log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("DmcMcp.Serve");
+        var door = new Door(settings.Key, settings.Tokens == null ? null : app.Services.GetRequiredService<UserTokens>(),
+            settings.MetadataUrl, app.Services.GetRequiredService<ILoggerFactory>().CreateLogger<Door>());
+        app.Use((ctx, next) => door.Handle(ctx, next));
         // Routing after the door: the endpoint is matched on the path with the key already stripped.
         app.UseRouting();
+        if (settings.Tokens != null)
+        {
+            // RFC 9728, as the MCP authorization spec asks: where to get a token for this server. The SDK's own
+            // McpAuthenticationHandler is not used — it derives these addresses from the request (http behind nginx).
+            var metadata = new ProtectedResourceMetadata
+            {
+                Resource = settings.ResourceUrl,
+                AuthorizationServers = [settings.Tokens.Issuer],
+                BearerMethodsSupported = ["header"],
+                ScopesSupported = ["openid"],
+            };
+            var typeInfo = McpJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ProtectedResourceMetadata));
+            app.MapGet(Door.McpMetadataPath, () => Results.Json(metadata, typeInfo));
+            app.MapGet(Door.MetadataPath, () => Results.Json(metadata, typeInfo));
+        }
         app.MapPost("/mcp/upload", async (HttpRequest req, UploadStore store, CancellationToken ct) =>
         {
             // Before the body is read: ReadFormAsync buffers the file on the container's disk, then Save copies it.
@@ -114,7 +192,8 @@ public static class ServeCommand
             try
             {
                 await using var stream = file.OpenReadStream();
-                var saved = await store.Save(stream, file.FileName, ct);
+                // Whoever the door let in owns it: the key's account, or the person whose token sent it.
+                var saved = await store.Save(stream, file.FileName, (Caller.Current ?? Caller.Server).Owner, ct);
                 return Results.Ok(new { file = saved.Ref, name = saved.Name, size = saved.Size, expiresAt = saved.ExpiresAt });
             }
             catch (InvalidDataException e) { return Results.BadRequest(new { error = e.Message }); }
@@ -124,6 +203,7 @@ public static class ServeCommand
             }
         });
         app.MapMcp("/mcp");
+        app.Lifetime.ApplicationStarted.Register(() => log.LogInformation("{Modes}", Modes(settings)));
         return app;
     }
 }
