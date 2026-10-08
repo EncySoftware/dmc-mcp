@@ -49,6 +49,16 @@ public class AiToolsTests
         Assert.Contains("source: archive", res);
     }
 
+    /** Like set_cover: DMC's form calls the gallery's first picture the cover, so the new one leads it. */
+    [Fact]
+    public async Task TheNewCoverLeadsTheGallery()
+    {
+        var dmc = WithPost();
+        await Tools(dmc).RegenerateCover("p1");
+        var images = Assert.IsAssignableFrom<IEnumerable<string>>(Assert.Single(dmc.Puts).Body["images"]).ToArray();
+        Assert.Equal("tmp/u9/preview.png", images[0]);
+    }
+
     [Fact]
     public async Task AnArchiveWithoutAPictureAdvisesAi()
     {

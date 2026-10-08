@@ -664,7 +664,7 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: could not get the cover: " + e.Message; }
 
-        var putErr = await PutRaw(p, "imageUrl", image, token);
+        var putErr = await PutCover(p, image, token);
         return putErr ?? $"Cover of \"{p.Name}\" updated (source: {(src == "archive" ? "archive" : "AI")}).\nLink: {p.Url(dmc.Site)}";
     }
 
@@ -910,13 +910,19 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: could not upload the file to DMC: " + e.Message; }
 
+        var putErr = await PutCover(p, staged, token);
+        return putErr ?? $"Cover of \"{p.Name}\" replaced with {Path.GetFileName(path)}.\nLink: {p.Url(dmc.Site)}";
+    }
+
+    /** A new cover on the card and at the head of the gallery (GalleryWithCover), the rest of the card as it was. */
+    private async Task<string?> PutCover(ProductInfo p, string cover, string token)
+    {
         var body = DmcJson.RequestFrom(p.Raw);
-        body["imageUrl"] = staged;
-        body["images"] = GalleryWithCover(staged, p.Raw);
-        try { await dmc.UpdateProduct(p.Id, body, token); }
+        body["imageUrl"] = cover;
+        body["images"] = GalleryWithCover(cover, p.Raw);
+        try { await dmc.UpdateProduct(p.Id, body, token); return null; }
         catch (DmcHttpException e) { return await Why(e); }
         catch (Exception e) { return "ERROR: DMC did not respond: " + e.Message; }
-        return $"Cover of \"{p.Name}\" replaced with {Path.GetFileName(path)}.\nLink: {p.Url(dmc.Site)}";
     }
 
     /**
