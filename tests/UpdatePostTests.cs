@@ -67,6 +67,26 @@ public class UpdatePostTests
         Assert.Contains("did not find", res);
     }
 
+    /**
+     * The price goes back as it came: under priceEur, the one name DMC's PUT reads (its number has been dollars since
+     * DMC's payments release, the name kept), and untouched. DMC's PUT is a full replace: without the price a draft
+     * loses it and a published card is refused; another number is judged as a new price.
+     */
+    [Fact]
+    public async Task ThePriceGoesBackUnderItsOwnNameAndUntouched()
+    {
+        var dmc = new FakeDmcClient();
+        dmc.Products["p1"] = DmcJson.Product(JsonDocument.Parse("""
+            {"id":"p1","slug":"fanuc-0i","name":"Fanuc 0i","contentType":"POST_PROCESSOR","publicationStatus":"PUBLISHED",
+             "productFile":"products/p1/post.zip","priceEur":19.00,"priceCurrency":"USD","trialDays":30}
+            """).RootElement);
+
+        await Tools(dmc).UpdatePost("p1", name: "Fanuc 0i-MF");
+
+        var (_, body) = Assert.Single(dmc.Puts);
+        Assert.Equal(19.00m, ((JsonElement)body["priceEur"]!).GetDecimal());
+    }
+
     /** A schema card with the work area the archive gave it: X 508 × Y 406.4 × Z 508. */
     private static FakeDmcClient WithSchema()
     {

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using DmcMcp;
 using Xunit;
@@ -51,4 +52,53 @@ public class DescribeTests
     {
         Assert.Contains("did not find", await Tools(new FakeDmcClient()).DescribePost("nope"));
     }
+
+    /**
+     * The price reads in the currency DMC names beside it. priceEur is a historical name: since DMC's payments release
+     * the number is US dollars and priceCurrency says "USD"; an older DMC sends no priceCurrency, and its numbers are
+     * euros. 0 and -1 stay words whatever the currency.
+     */
+    [Theory]
+    [InlineData("19.00", "\"USD\"", "Price: $19.00, trial 30 days")]
+    [InlineData("19.00", "\"usd\"", "Price: $19.00, trial 30 days")]
+    [InlineData("19.00", null, "Price: 19.00 €, trial 30 days")] // an older DMC: no priceCurrency at all
+    [InlineData("19.00", "\"\"", "Price: 19.00 €, trial 30 days")]
+    [InlineData("19.00", "null", "Price: 19.00 €, trial 30 days")]
+    [InlineData("19.00", "\"GBP\"", "Price: 19.00 GBP, trial 30 days")]
+    [InlineData("0.00", "\"USD\"", "Price: free, trial 30 days")]
+    [InlineData("-1.00", "\"USD\"", "Price: included in maintenance, trial 30 days")]
+    public async Task PriceReadsInTheCurrencyDmcNames(string priceEur, string? priceCurrency, string line)
+    {
+        var dmc = new FakeDmcClient();
+        dmc.Products["p1"] = Priced(priceEur, priceCurrency);
+        Assert.Equal(line, PriceLine(await Tools(dmc).DescribePost("p1")));
+    }
+
+    /** The number reads the same on every machine: "$19.50", never "$19,50" where the culture writes a decimal comma. */
+    [Fact]
+    public async Task PriceReadsWithADecimalPointWhateverTheCulture()
+    {
+        var dmc = new FakeDmcClient();
+        dmc.Products["usd"] = Priced("19.50", "\"USD\"");
+        dmc.Products["eur"] = Priced("19.50", null);
+        var comma = (CultureInfo)CultureInfo.InvariantCulture.Clone();
+        comma.NumberFormat.NumberDecimalSeparator = ","; // as ru-RU writes it; a clone needs no ICU data on the runner
+        var was = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = comma;
+        try
+        {
+            Assert.Equal("Price: $19.50, trial 30 days", PriceLine(await Tools(dmc).DescribePost("usd")));
+            Assert.Equal("Price: 19.50 €, trial 30 days", PriceLine(await Tools(dmc).DescribePost("eur")));
+        }
+        finally { CultureInfo.CurrentCulture = was; }
+    }
+
+    /** A card as DMC sends it: the price with cents (a BigDecimal of scale 2); priceCurrency is raw JSON, null leaves it out. */
+    private static ProductInfo Priced(string priceEur, string? priceCurrency) => DmcJson.Product(JsonDocument.Parse($$"""
+        {"id":"p1","slug":"fanuc-0i","name":"Fanuc 0i","contentType":"POST_PROCESSOR","publicationStatus":"PUBLISHED",
+         "priceEur":{{priceEur}}{{(priceCurrency == null ? "" : ",\"priceCurrency\":" + priceCurrency)}},"trialDays":30}
+        """).RootElement);
+
+    private static string PriceLine(string describe) =>
+        describe.Split('\n').Select(l => l.TrimEnd('\r')).Single(l => l.StartsWith("Price: "));
 }

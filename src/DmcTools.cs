@@ -858,9 +858,8 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         sb.AppendLine("Archive: " + (RawStr(p, "productFile") ?? "none"));
         sb.AppendLine("Sample code: " + (RawStr(p, "sampleOutputCodeFile") ?? "none")
                       + "; codes list: " + (RawStr(p, "supportedCodesFile") ?? "none"));
-        var price = RawNum(p, "priceEur");
         var trial = RawNum(p, "trialDays");
-        sb.AppendLine("Price: " + (price == null ? "not set" : price == -1 ? "included in maintenance" : price == 0 ? "free" : $"{price} €")
+        sb.AppendLine("Price: " + PriceText(RawNum(p, "priceEur"), RawStr(p, "priceCurrency"))
                       + (trial != null ? $", trial {trial} days" : ""));
         IReadOnlyList<LinkInfo> links;
         try { links = await dmc.GetLinks(p.Id, token); }
@@ -868,6 +867,22 @@ public class DmcTools(IDmcClient dmc, DmcTokenProvider tokens, FileInputs? input
         var named = links.Where(l => l.Product != null).Select(l => $"{l.Product!.Name} ({l.LinkType})").ToList();
         sb.AppendLine("Links: " + (named.Count == 0 ? "none" : string.Join(", ", named)));
         return sb.ToString();
+    }
+
+    /**
+     * A price as DMC means it. The number comes as priceEur, a historical name: since DMC's payments release it is US
+     * dollars, and DMC says so beside it (priceCurrency "USD"); an older DMC sends no priceCurrency, and its numbers are
+     * euros. 0 is free and -1 included in maintenance in any currency. The number reads the same on every machine.
+     */
+    private static string PriceText(decimal? price, string? currency)
+    {
+        if (price == null) return "not set";
+        if (price == -1) return "included in maintenance";
+        if (price == 0) return "free";
+        var n = price.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var code = currency?.Trim();
+        if (string.IsNullOrEmpty(code)) return n + " €";
+        return code.Equals("USD", StringComparison.OrdinalIgnoreCase) ? "$" + n : n + " " + code;
     }
 
     // ------------------------------------------------ inspect_archive / set_cover
